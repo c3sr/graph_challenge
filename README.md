@@ -10,6 +10,15 @@ mkdir ~/graphs
 python tools/get_data.py --out ~/graphs
 ```
 
+Datasets may be converted to a binary edge list format using `python tools/tsv-to-bel.py`.
+
+To produce graph.bel, try one of the following:
+```
+python tools/tsv-to-bel.py graph.tsv
+python tools/tsv-to-bel.py graph.tsv graph.bel
+```
+
+
 ## Citing
 
 Our 2017 submission may be cited with the following bibtex entry
