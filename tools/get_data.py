@@ -33,10 +33,11 @@ GRAPHS = [
     ("https://graphchallenge.s3.amazonaws.com/snap/amazon0505/amazon0505_adj.tsv", "3644d53c530658164d2ee0c7a40bcb6b"),
     ("https://graphchallenge.s3.amazonaws.com/snap/amazon0601/amazon0601_adj.tsv", "149551a622d68e76c0227603e53d8e46"),
     ("https://graphchallenge.s3.amazonaws.com/snap/soc-Slashdot0902/soc-Slashdot0902_adj.tsv", "fe7a3d71eeb11a94ecdf0a0b84766c93"),
-    ("https://graphchallenge.s3.amazonaws.com/snap/roadNet-CA/roadNet-CA_adj.tsv", "d0e4b76f314e86ca78c313bb64ab5aa7")
-    ("https://graphchallenge.s3.amazonaws.com/snap/roadNet-PA/roadNet-PA_adj.tsv", "7ee3faf91c95b22b1398618daa31fb3a")
-    ("https://graphchallenge.s3.amazonaws.com/snap/roadNet-TX/roadNet-TX_adj.tsv", "1bd453e8551b1432eb8a81eab7325c88")
+    ("https://graphchallenge.s3.amazonaws.com/snap/roadNet-CA/roadNet-CA_adj.tsv", "d0e4b76f314e86ca78c313bb64ab5aa7"),
+    ("https://graphchallenge.s3.amazonaws.com/snap/roadNet-PA/roadNet-PA_adj.tsv", "7ee3faf91c95b22b1398618daa31fb3a"),
+    ("https://graphchallenge.s3.amazonaws.com/snap/roadNet-TX/roadNet-TX_adj.tsv", "1bd453e8551b1432eb8a81eab7325c88"),
     # MAWI Datasets
+    ("https://graphchallenge.s3.amazonaws.com/synthetic/gc5/201512012345.v18571154_e38040320.tsv","919a22f1456d9fd978ba8d12ea96579c"), # 1
     ("https://graphchallenge.s3.amazonaws.com/synthetic/gc5/201512020330.v226196185_e480047894.tsv", "3b7f0546835d1f10cc41312f7a12b8d1"), # 5
 ]
 
