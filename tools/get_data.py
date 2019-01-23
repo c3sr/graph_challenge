@@ -14,7 +14,7 @@ import struct
 import gzip
 import shutil
 
-# Graphs in (name, url, md5) format
+# Graphs in (url, md5) format
 GRAPHS = [
     # graphs with 0 triangles
     ("https://graphchallenge.s3.amazonaws.com/synthetic/gc3/Theory-16-25-81-Bk.tsv", "4e38a437650600c8fa6cd1b85880f05b"),
@@ -23,6 +23,10 @@ GRAPHS = [
     # graphs with some triangles
     ("https://graphchallenge.s3.amazonaws.com/synthetic/gc3/Theory-16-25-81-B2k.tsv", "bb572123192ef15e21a49c6154cf2ebc"),
     # protein k-mer
+    ("https://graphchallenge.s3.amazonaws.com/synthetic/gc6/A2A.tsv", None), # 1 missing
+    ("https://graphchallenge.s3.amazonaws.com/synthetic/gc6/P1a.tsv", "09db6f770ae4a882b1aa24bffab6e413"), # 2, 5.66G
+    ("https://graphchallenge.s3.amazonaws.com/synthetic/gc6/U1a.tsv", "dfaf70b5ad307a5714310ef1b426abe4"), # 3, 2.5G
+    ("https://graphchallenge.s3.amazonaws.com/synthetic/gc6/V1r.tsv", "a2ed4fa99e342e94e99f3cf8f9f66284"), # 4, 9.1G
     ("https://graphchallenge.s3.amazonaws.com/synthetic/gc6/V2a.tsv", "b3f08b442565a5727ddeb94af5814d6a"), # 5, 2.1G
     # Synthetic Datasets
     ("https://graphchallenge.s3.amazonaws.com/synthetic/graph500-scale18-ef16/graph500-scale18-ef16_adj.tsv.gz", "b942970d403218b1ec4ed2d4cd76b52c"),
@@ -89,6 +93,8 @@ matching_graphs = GRAPHS
 
 
 for (url, expected_md5) in matching_graphs:
+    if expected_md5:
+        assert len(expected_md5) == 32
     needs_download = ""
     name = get_basename(url)
     dst = os.path.join(output_dir, name)
@@ -103,6 +109,8 @@ for (url, expected_md5) in matching_graphs:
             actual_md5 = hash_file(dst)
             if actual_md5 != expected_md5.lower():
                 needs_download = "hash mismatch"
+            else:
+                print("MD5_MATCH", dst)
 
         except IOError as e:
             needs_download = "file open error"
@@ -110,11 +118,14 @@ for (url, expected_md5) in matching_graphs:
 
     if needs_download:
         print("DOWNLOAD", dst, "reason:", needs_download)
-        urllib.urlretrieve(url, dst)
+        try:
+            urllib.urlretrieve(url, dst)
+        except IOError as e:
+            print("IOERROR", url, str(e))
+            continue
         if hash_file(dst) != expected_md5:
             print("MISMATCH", dst)
-    else:
-        print("MD5_MATCH", dst)
+        
 
     # check if the file needs to be extracted
     if dst.endswith(".gz"):
