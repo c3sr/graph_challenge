@@ -22,13 +22,22 @@ GRAPHS = [
     ("https://graphchallenge.s3.amazonaws.com/synthetic/gc3/Theory-16-25-81-B1k.tsv", "6d1e80bf560ab148b6d4de4cb429980d"),
     # graphs with some triangles
     ("https://graphchallenge.s3.amazonaws.com/synthetic/gc3/Theory-16-25-81-B2k.tsv", "bb572123192ef15e21a49c6154cf2ebc"),
-    ("https://graphchallenge.s3.amazonaws.com/synthetic/gc6/V2a.tsv", "b3f08b442565a5727ddeb94af5814d6a"), # protein k-mer graph 5, 2.1G
+    # protein k-mer
+    ("https://graphchallenge.s3.amazonaws.com/synthetic/gc6/V2a.tsv", "b3f08b442565a5727ddeb94af5814d6a"), # 5, 2.1G
     # Synthetic Datasets
     ("https://graphchallenge.s3.amazonaws.com/synthetic/graph500-scale18-ef16/graph500-scale18-ef16_adj.tsv.gz", "b942970d403218b1ec4ed2d4cd76b52c"),
     ("https://graphchallenge.s3.amazonaws.com/synthetic/graph500-scale22-ef16/graph500-scale22-ef16_adj.tsv.gz", "15d99816ffc4f4e166c4ba46c31b72b1"),
     # SNAP datasets
+    ("https://graphchallenge.s3.amazonaws.com/snap/amazon0302/amazon0302_adj.tsv", "8b6f22a1e4fda1aeb5dd8132c9c860af"),
+    ("https://graphchallenge.s3.amazonaws.com/snap/amazon0312/amazon0312_adj.tsv", "3bd20f592f00e03291ed314eef9d8333"),
+    ("https://graphchallenge.s3.amazonaws.com/snap/amazon0505/amazon0505_adj.tsv", "3644d53c530658164d2ee0c7a40bcb6b"),
+    ("https://graphchallenge.s3.amazonaws.com/snap/amazon0601/amazon0601_adj.tsv", "149551a622d68e76c0227603e53d8e46"),
     ("https://graphchallenge.s3.amazonaws.com/snap/soc-Slashdot0902/soc-Slashdot0902_adj.tsv", "fe7a3d71eeb11a94ecdf0a0b84766c93"),
-    ("https://graphchallenge.s3.amazonaws.com/synthetic/gc5/201512020330.v226196185_e480047894.tsv", "3b7f0546835d1f10cc41312f7a12b8d1"), # mawi graph 5
+    ("https://graphchallenge.s3.amazonaws.com/snap/roadNet-CA/roadNet-CA_adj.tsv", "d0e4b76f314e86ca78c313bb64ab5aa7")
+    ("https://graphchallenge.s3.amazonaws.com/snap/roadNet-PA/roadNet-PA_adj.tsv", "7ee3faf91c95b22b1398618daa31fb3a")
+    ("https://graphchallenge.s3.amazonaws.com/snap/roadNet-TX/roadNet-TX_adj.tsv", "1bd453e8551b1432eb8a81eab7325c88")
+    # MAWI Datasets
+    ("https://graphchallenge.s3.amazonaws.com/synthetic/gc5/201512020330.v226196185_e480047894.tsv", "3b7f0546835d1f10cc41312f7a12b8d1"), # 5
 ]
 
 

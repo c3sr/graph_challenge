@@ -33,3 +33,5 @@
 
 build
 .vscode
+tools/*.tsv
+tools/*.tsv.gz
