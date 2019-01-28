@@ -28,12 +28,20 @@ else:
 # tsv path and bel path should not be the same
 assert tsv_path != bel_path
 
+if os.path.isfile(bel_path):
+    print("{} alread exists".format(bel_path))
+    sys.exit(1)
+
 with open(tsv_path, 'rb') as inf, open(bel_path, 'wb') as outf:
     for line in inf:
         dst, src, weight = line.split()
-        dstBytes = struct.pack("<Q", int(dst))
-        srcBytes = struct.pack("<Q", int(src))
-        weightBytes = struct.pack("<Q", int(weight))
+        try:
+            dstBytes = struct.pack("<Q", int(dst))
+            srcBytes = struct.pack("<Q", int(src))
+            weightBytes = struct.pack("<Q", int(weight))
+        except ValueError as e:
+            print("error while converting {} to {}: {}".format(tsv_bath, bel_path, e))
+            sys.exit(1)
         outf.write(dstBytes + srcBytes + weightBytes)
 
 # the bel file should be some multiple of 24 bytes
