@@ -45,13 +45,14 @@ GRAPHS = [
     ("https://graphchallenge.s3.amazonaws.com/snap/roadNet-PA/roadNet-PA_adj.tsv", "7ee3faf91c95b22b1398618daa31fb3a"),
     ("https://graphchallenge.s3.amazonaws.com/snap/roadNet-TX/roadNet-TX_adj.tsv", "1bd453e8551b1432eb8a81eab7325c88"),
     ("https://graphchallenge.s3.amazonaws.com/snap/cit-Patents/cit-Patents_adj.tsv", "3fe001a405018f43ca26b4300ff46280"),
+    ("https://graphchallenge.s3.amazonaws.com/snap/ca-HepPh/ca-HepPh_adj.tsv", "ba6c86bb90df75f5057f8edd7e619af1"), # 2.8M
+    ("https://graphchallenge.s3.amazonaws.com/snap/ca-HepTh/ca-HepTh_adj.tsv", "dab400fef8f6d5a272662e4fb931c794"), # 597K
     ("https://graphchallenge.s3.amazonaws.com/snap/ca-GrQc/ca-GrQc_adj.tsv", "a2b7d2c119590d8e7ee8dece3625ef47"),
     ("https://graphchallenge.s3.amazonaws.com/snap/p2p-Gnutella04/p2p-Gnutella04_adj.tsv", "77832f99a4e29db02dca7bb950b6dadf"),
     ("https://graphchallenge.s3.amazonaws.com/snap/p2p-Gnutella08/p2p-Gnutella08_adj.tsv", "7b89799609357dc1336a06860c503a29"),
     ("https://graphchallenge.s3.amazonaws.com/snap/p2p-Gnutella09/p2p-Gnutella09_adj.tsv", "c496e97ae72a81b15c0483fb5c117a74"),
     ("https://graphchallenge.s3.amazonaws.com/snap/oregon1_010331/oregon1_010331_adj.tsv", "d2369373e45d3840a71a72b2bc8f6303"),
     ("https://graphchallenge.s3.amazonaws.com/snap/flickrEdges/flickrEdges_adj.tsv", "e46e6559fb0239593fae6b7f1bb09a40"),
-    ("https://graphchallenge.s3.amazonaws.com/snap/ca-HepPh/ca-HepPh_adj.tsv", "ba6c86bb90df75f5057f8edd7e619af1"), # 2.8M
     # MAWI Datasets
     ("https://graphchallenge.s3.amazonaws.com/synthetic/gc5/201512012345.v18571154_e38040320.tsv","919a22f1456d9fd978ba8d12ea96579c"), # 1
     ("https://graphchallenge.s3.amazonaws.com/synthetic/gc5/201512020330.v226196185_e480047894.tsv", "3b7f0546835d1f10cc41312f7a12b8d1"), # 5
