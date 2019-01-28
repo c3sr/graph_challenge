@@ -23,7 +23,7 @@ GRAPHS = [
     # graphs with some triangles
     ("https://graphchallenge.s3.amazonaws.com/synthetic/gc3/Theory-16-25-81-B2k.tsv", "bb572123192ef15e21a49c6154cf2ebc"),
     # protein k-mer
-    ("https://graphchallenge.s3.amazonaws.com/synthetic/gc6/A2A.tsv", None), # 1 missing
+    ("https://graphchallenge.s3.amazonaws.com/synthetic/gc6/A2a.tsv", "634c8340ddbcae4fc49b799cb8bd1170"), # 1 7.0G
     ("https://graphchallenge.s3.amazonaws.com/synthetic/gc6/P1a.tsv", "09db6f770ae4a882b1aa24bffab6e413"), # 2, 5.66G
     ("https://graphchallenge.s3.amazonaws.com/synthetic/gc6/U1a.tsv", "dfaf70b5ad307a5714310ef1b426abe4"), # 3, 2.5G
     ("https://graphchallenge.s3.amazonaws.com/synthetic/gc6/V1r.tsv", "a2ed4fa99e342e94e99f3cf8f9f66284"), # 4, 9.1G
@@ -46,6 +46,7 @@ GRAPHS = [
     ("https://graphchallenge.s3.amazonaws.com/snap/roadNet-TX/roadNet-TX_adj.tsv", "1bd453e8551b1432eb8a81eab7325c88"),
     ("https://graphchallenge.s3.amazonaws.com/snap/cit-Patents/cit-Patents_adj.tsv", "3fe001a405018f43ca26b4300ff46280"),
     ("https://graphchallenge.s3.amazonaws.com/snap/ca-GrQc/ca-GrQc_adj.tsv", "a2b7d2c119590d8e7ee8dece3625ef47"),
+    ("https://graphchallenge.s3.amazonaws.com/snap/p2p-Gnutella04/p2p-Gnutella04_adj.tsv", "77832f99a4e29db02dca7bb950b6dadf"),
     ("https://graphchallenge.s3.amazonaws.com/snap/p2p-Gnutella08/p2p-Gnutella08_adj.tsv", "7b89799609357dc1336a06860c503a29"),
     ("https://graphchallenge.s3.amazonaws.com/snap/p2p-Gnutella09/p2p-Gnutella09_adj.tsv", "c496e97ae72a81b15c0483fb5c117a74"),
     ("https://graphchallenge.s3.amazonaws.com/snap/oregon1_010331/oregon1_010331_adj.tsv", "d2369373e45d3840a71a72b2bc8f6303"),
