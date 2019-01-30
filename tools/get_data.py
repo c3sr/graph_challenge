@@ -34,6 +34,9 @@ GRAPHS = [
     ("https://graphchallenge.s3.amazonaws.com/synthetic/graph500-scale20-ef16/graph500-scale20-ef16_adj.tsv.gz", "df7d3f2a447957819c9a6d628b401db8"),
     ("https://graphchallenge.s3.amazonaws.com/synthetic/graph500-scale21-ef16/graph500-scale21-ef16_adj.tsv.gz", "4227717d5234616cd46faca146338e81"),
     ("https://graphchallenge.s3.amazonaws.com/synthetic/graph500-scale22-ef16/graph500-scale22-ef16_adj.tsv.gz", "15d99816ffc4f4e166c4ba46c31b72b1"),
+    ("https://graphchallenge.s3.amazonaws.com/synthetic/graph500-scale23-ef16/graph500-scale23-ef16_adj.tsv.gz", "10f55b78d67fd9bd4a27430e0bf0206b"), # 1 G
+    ("https://graphchallenge.s3.amazonaws.com/synthetic/graph500-scale24-ef16/graph500-scale24-ef16_adj.tsv.gz", "39e14ec7e4670b95c7ed4b1c2a3b4c42"), # 2.1 G
+    ("https://graphchallenge.s3.amazonaws.com/synthetic/graph500-scale25-ef16/graph500-scale25-ef16_adj.tsv.gz", "0b1505b8bdf47ee3d58088a5fe355b85"), # 4.3 G
     # SNAP datasets
     ("https://graphchallenge.s3.amazonaws.com/snap/amazon0302/amazon0302_adj.tsv", "8b6f22a1e4fda1aeb5dd8132c9c860af"),
     ("https://graphchallenge.s3.amazonaws.com/snap/amazon0312/amazon0312_adj.tsv", "3bd20f592f00e03291ed314eef9d8333"),
