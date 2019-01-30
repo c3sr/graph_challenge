@@ -86,6 +86,8 @@ def get_basename(url):
 parser = argparse.ArgumentParser()
 
 parser.add_argument("--out", default=".", help="output dir")
+parser.add_argument("--name", help="only download graphs with NAME in URL")
+parser.add_argument("--list", action="store_true", help="print matching graphs, do not download")
 
 args = parser.parse_args()
 
@@ -96,10 +98,17 @@ if not os.path.isdir(output_dir):
     print("output directory {} does not exist".format(output_dir))
     sys.exit(-1)
 
+if args.name:
+    matching_graphs = [(u, m) for (u, m) in GRAPHS if args.name.lower() in u.lower()]
+else:
+    matching_graphs = GRAPHS
 
-matching_graphs = GRAPHS
 
 
+if args.list:
+    for (url, _) in matching_graphs:
+        print(url)
+    sys.exit(0)
 
 
 
