@@ -55,6 +55,11 @@ GRAPHS = [
     ("https://graphchallenge.s3.amazonaws.com/snap/p2p-Gnutella08/p2p-Gnutella08_adj.tsv", "7b89799609357dc1336a06860c503a29"),
     ("https://graphchallenge.s3.amazonaws.com/snap/p2p-Gnutella09/p2p-Gnutella09_adj.tsv", "c496e97ae72a81b15c0483fb5c117a74"),
     ("https://graphchallenge.s3.amazonaws.com/snap/oregon1_010331/oregon1_010331_adj.tsv", "d2369373e45d3840a71a72b2bc8f6303"),
+    ("https://graphchallenge.s3.amazonaws.com/snap/oregon1_010519/oregon1_010519_adj.tsv", "b9df9b8b446f0d52a8e678406905590e"),
+    ("https://graphchallenge.s3.amazonaws.com/snap/oregon1_010421/oregon1_010421_adj.tsv", "4ba3733a61f77cebbcd18cbc284026d2"),
+    ("https://graphchallenge.s3.amazonaws.com/snap/oregon1_010428/oregon1_010428_adj.tsv", "83a1100cb8d64c8c58ccff2dfc80535e"),
+    ("https://graphchallenge.s3.amazonaws.com/snap/oregon1_010526/oregon1_010526_adj.tsv", "18f22ac1487c9a389332fbcf4cb1eebc"), # 548K
+
     ("https://graphchallenge.s3.amazonaws.com/snap/flickrEdges/flickrEdges_adj.tsv", "e46e6559fb0239593fae6b7f1bb09a40"),
     # MAWI Datasets
     ("https://graphchallenge.s3.amazonaws.com/synthetic/gc5/201512012345.v18571154_e38040320.tsv","919a22f1456d9fd978ba8d12ea96579c"), # 1
