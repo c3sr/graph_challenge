@@ -26,7 +26,7 @@ def histogram(xs, num_buckets):
     bucket_size = (max_x - min_x + num_buckets) / num_buckets
     buckets = [0 for i in range(num_buckets)]
     for x in xs:
-        bucket_id = (x - min_x) / bucket_size
+        bucket_id = int((x - min_x) / bucket_size)
         buckets[bucket_id] += 1
     return buckets
 
