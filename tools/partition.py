@@ -1,8 +1,17 @@
 from __future__ import print_function
 
+import logging
 import math
 
-def rowwise(adj, n):
+logger = logging.getLogger(__name__)
+
+def ceil_int(num, den=1):
+    if isinstance(num, int) and isinstance(den, int):
+        return int((num + den - 1) / den)
+    return int(math.ceil(float(num) / float(den)))
+
+def nnz(adj, n):
+    logger.info("nnz")
     edges = []
 
     csrNnz = sum(len(row) for row in adj.values())
@@ -17,7 +26,23 @@ def rowwise(adj, n):
 
     return edges
 
+
+def strided_nnz(adj, n, tileSize=10000):
+    logger.info("strided_nnz, tileSize={}".format(tileSize))
+    edges = []
+
+    nz = 0
+    for src, row in adj.items():
+        for dst in row:
+            part = int(nz / tileSize) % n
+            edges.append((src, dst, part))
+            nz += 1
+
+    return edges
+
+
 def strided_rows(adj, n, tileSize=10000):
+    logger.info("strided_row, tileSize={}".format(tileSize))
     edges = []
 
     for src, cols in adj.items():
@@ -28,10 +53,7 @@ def strided_rows(adj, n, tileSize=10000):
     return edges
 
 
-def ceil_int(num, den=1):
-    if isinstance(num, int) and isinstance(den, int):
-        return int((num + den - 1) / den)
-    return int(math.ceil(float(num) / float(den)))
+
 
 
 # rotate/flip a quadrant appropriately
@@ -69,7 +91,7 @@ def chunks(l, n):
 
 
 def hilbert(adj, n, maxSrc, maxDst):
-
+    logger.info("hilbert")
     pow2 = 2 ** ceil_int(math.log(max(maxSrc+1, maxDst+1), 2))
     assert pow2 >= maxSrc
     assert pow2 >= maxDst
@@ -88,6 +110,7 @@ def hilbert(adj, n, maxSrc, maxDst):
 
 def tiled_hilbert(adj, n, maxSrc, maxDst, tileSize = 50000):
     """ only order edges by which tileSize X tileSize tile they fall in"""
+    logger.info("tiled_hilbert, tileSize={}".format(tileSize))
     # determine the number of tiles in each dimension
     numSrcTiles = ceil_int(maxSrc, tileSize)
     numDstTiles = ceil_int(maxDst, tileSize)

@@ -158,10 +158,11 @@ for bel_path in sys.argv[1:]:
 
     logging.info("partitioning")
 
-    # edges = partition.rowwise(adj, NUM_PARTS)
+    # edges = partition.nnz(adj, NUM_PARTS)
     # edges = partition.hilbert(adj, NUM_PARTS, maxSrc, maxDst)
-    edges = partition.tiled_hilbert(adj, NUM_PARTS, maxSrc, maxDst)
+    # edges = partition.tiled_hilbert(adj, NUM_PARTS, maxSrc, maxDst)
     # edges = partition.strided_rows(adj, NUM_PARTS)
+    edges = partition.strided_nnz(adj, NUM_PARTS)
 
     for i in range(NUM_PARTS):
         print(sum(1 for _,_,p in edges if p == i), "edges in partition", i)
@@ -210,7 +211,7 @@ for bel_path in sys.argv[1:]:
         conflictCount[cfx] += 1
     for k,v in sorted(conflictCount.items()):
         print(k, ":", v, pct(float(v)/ float(numPages)))
-    print("page dup:", sum(len(c) for c in pageCounter) / len(pageCounter))
+    print("page dup:", float(sum(len(c) for c in pageCounter)) / len(pageCounter))
 
     print("cfx: row count")
     conflictCount = {}
@@ -223,6 +224,7 @@ for bel_path in sys.argv[1:]:
         print(k, ":", v, pct(float(v)/ float(numRows)))
 
 
+    # sys.exit(1)
     # plot edge assignments
     logging.info("plotting nonzeros")
     fig, ax = plt.subplots(1)
