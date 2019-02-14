@@ -17,6 +17,23 @@ def rowwise(adj, n):
 
     return edges
 
+def strided_rows(adj, n, tileSize=10000):
+    edges = []
+
+    for src, cols in adj.items():
+        part = int(src / tileSize) % n
+        for dst in cols:
+            edges.append((src, dst, part))
+
+    return edges
+
+
+def ceil_int(num, den=1):
+    if isinstance(num, int) and isinstance(den, int):
+        return int((num + den - 1) / den)
+    return int(math.ceil(float(num) / float(den)))
+
+
 # rotate/flip a quadrant appropriately
 def rot(n, x, y, rx, ry):
     if ry == 0:
@@ -53,7 +70,9 @@ def chunks(l, n):
 
 def hilbert(adj, n, maxSrc, maxDst):
 
-    pow2 = 2 ** int(math.ceil(math.log(max(maxSrc+1, maxDst+1), 2)))
+    pow2 = 2 ** ceil_int(math.log(max(maxSrc+1, maxDst+1), 2))
+    assert pow2 >= maxSrc
+    assert pow2 >= maxDst
 
     hilbertPath = []
     for row, cols in adj.items():
@@ -67,22 +86,28 @@ def hilbert(adj, n, maxSrc, maxDst):
             edges.append((src, dst, part))
     return edges
 
-def tiled_hilbert(adj, n, maxSrc, maxDst, tileSize = 32):
+def tiled_hilbert(adj, n, maxSrc, maxDst, tileSize = 50000):
     """ only order edges by which tileSize X tileSize tile they fall in"""
     # determine the number of tiles in each dimension
     numSrcTiles = ceil_int(maxSrc, tileSize)
     numDstTiles = ceil_int(maxDst, tileSize)
 
     # determine the largest power of 2 that covers the tiles
-    pow2 = 2 ** ceil_int(math.log(max(numSrcTiles, numDstTiles), 2))
+    exp = math.log(max(numSrcTiles+1, numDstTiles+1), 2)
+    pow2 = 2 ** ceil_int(exp)
+    assert pow2 >= numSrcTiles
+    assert pow2 >= numDstTiles
 
     hilbertPath = []
     for row, cols in adj.items():
-        for col in cols:
-            srcTile = ceil_int(row, tileSize)
-            dstTile = ceil_int(col, tileSize)
-            dTile = xy2d(pow2, srcTile, dstTile)
-            hilbertPath += [(d, row, col)]
+		srcTile = ceil_int(row, tileSize)
+		for col in cols:
+			dstTile = ceil_int(col, tileSize)
+			dTile = xy2d(pow2, dstTile, srcTile)
+			hilbertPath += [(dTile, row, col)]
     hilbertPath = sorted(hilbertPath)
-    parts = [c for c in chunks(hilbertPath, n)]
-    return parts
+    edges = []
+    for part, chunk in enumerate(chunks(hilbertPath, n)):
+        for (_, src, dst) in chunk:
+            edges.append((src, dst, part))
+    return edges

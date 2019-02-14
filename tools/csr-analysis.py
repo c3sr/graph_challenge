@@ -56,10 +56,7 @@ def plot_pages(ax, pages, color):
 def plot_rows(ax, rows, color):
     if not rows:
         return
-    rects = []
-    for r in rows:
-        rects.append(Rectangle( (0, r-0.5), r, 1))
-
+    rects = [Rectangle( (0, r-0.5), r, 1) for r in rows]
     colors = [color for r in rows]
 
     pc = PatchCollection(rects, edgecolor=None, alpha=0.5, facecolors=colors)
@@ -106,31 +103,10 @@ def color_rows(ax, colors, width):
 
 
 def ceil_int(num, den=1):
-    return int((num + den - 1) / den)
+    if isinstance(num, int) and isinstance(den, int):
+        return int((num + den - 1) / den)
+    return int(math.ceil(float(num) / float(den)))
 
-
-
-def get_row_colors(partitions):
-    accessedBy = {}
-    for i, part in enumerate(partitions):
-        for _, r, c in part:
-            if r not in accessedBy:
-                accessedBy[r] = set()
-            if c not in accessedBy:
-                accessedBy[c] = set()
-            accessedBy[r].add(i)
-            accessedBy[c].add(i)
-    # print(accessedBy)
-
-    colors = ["0.0" for i in range(max(accessedBy.keys())+1)]
-    for row, accessors in accessedBy.items():
-        if len(accessors) == 1:
-            colors[row] = DEVICE_ID_TO_COLOR[next(iter(accessors))]
-        else:
-            colors[row] = str(0.25 * len(accessors))
-
-    # print(colors)
-    return colors
 
 
 for bel_path in sys.argv[1:]:
@@ -182,8 +158,10 @@ for bel_path in sys.argv[1:]:
 
     logging.info("partitioning")
 
-    edges = partition.rowwise(adj, NUM_PARTS)
-    edges = partition.hilbert(adj, NUM_PARTS, maxSrc, maxDst)
+    # edges = partition.rowwise(adj, NUM_PARTS)
+    # edges = partition.hilbert(adj, NUM_PARTS, maxSrc, maxDst)
+    edges = partition.tiled_hilbert(adj, NUM_PARTS, maxSrc, maxDst)
+    # edges = partition.strided_rows(adj, NUM_PARTS)
 
     for i in range(NUM_PARTS):
         print(sum(1 for _,_,p in edges if p == i), "edges in partition", i)
