@@ -3,7 +3,6 @@ import logging
 import sys
 import os
 import struct
-import math
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from matplotlib.collections import PatchCollection
@@ -20,7 +19,9 @@ def get_color(i):
     
     
 PAGE_SIZE = 65536
+PAGE_SIZE = 4096
 ELEMENT_SIZE = 4
+NUM_PARTS = 4
 
 
 
@@ -53,6 +54,8 @@ def plot_pages(ax, pages, color):
     ax.add_collection(pc)
 
 def plot_rows(ax, rows, color):
+    if not rows:
+        return
     rects = []
     for r in rows:
         rects.append(Rectangle( (0, r-0.5), r, 1))
@@ -61,9 +64,16 @@ def plot_rows(ax, rows, color):
 
     pc = PatchCollection(rects, edgecolor=None, alpha=0.5, facecolors=colors)
     ax.set_xlim(left = 0)
-    ax.set_xlim(right = max(rows))
-    ax.set_ylim(top=0)
-    ax.set_ylim(bottom = max(rows))
+    ax.set_ylim(top = 0)
+
+    _, oldRight = ax.get_xlim()
+    oldBottom, _ = ax.get_ylim()
+
+    newRight = max(max(rows), oldRight)
+    newBottom = max(max(rows), oldBottom)
+
+    ax.set_xlim(right = newRight)
+    ax.set_ylim(bottom = newBottom)
 
     ax.add_collection(pc)
 
@@ -78,29 +88,9 @@ def pct(f):
         return round(x, 1)
     return round(x, 2)
 
-# rotate/flip a quadrant appropriately
-def rot(n, x, y, rx, ry):
-    if ry == 0:
-        if rx == 1:
-            x = n-1 - x
-            y = n-1 - y
-        
-        # Swap x and y
-        return y,x
-    return x,y
 
-# convert (x,y) to d
-def xy2d (n, x, y):
-    d = 0
-    s = int(n / 2)
-    while s > 0:
-        rx = int((x & s) > 0)
-        ry = int((y & s) > 0)
-        a = s * s * ((3 * rx) ^ ry)
-        d += a
-        x, y = rot(s, x, y, rx, ry)
-        s = int(s/2)
-    return d
+
+
 
 
 def color_rows(ax, colors, width):
@@ -113,69 +103,16 @@ def color_rows(ax, colors, width):
     ax.add_collection(pc)
 
 
-def chunks(l, n):
-    """ Yield n successive chunks from l.
-    """
-    newn = int(1.0 * len(l) / n + 0.5)
-    for i in range(0, n-1):
-        yield l[i*newn:i*newn+newn]
-    yield l[n*newn-newn:]
+
 
 def ceil_int(num, den=1):
     return int((num + den - 1) / den)
 
-def partition_hilbert(adj, n, maxSrc, maxDst):
-
-    pow2 = 2 ** int(math.ceil(math.log2(max(maxSrc+1, maxDst+1))))
-
-    hilbertPath = []
-    for row, cols in adj.items():
-        for col in cols:
-            d = xy2d(pow2, col, row)
-            hilbertPath += [(d, row, col)]
-    hilbertPath = sorted(hilbertPath)
-    parts = [c for c in chunks(hilbertPath, n)]
-    return parts
-
-def partition_tiled_hilbert(adj, n, maxSrc, maxDst, tileSize = 32):
-    """ only order edges by which tileSize X tileSize tile they fall in"""
-    # determine the number of tiles in each dimension
-    numSrcTiles = ceil_int(maxSrc, tileSize)
-    numDstTiles = ceil_int(maxDst, tileSize)
-
-    # determine the largest power of 2 that covers the tiles
-    pow2 = 2 ** ceil_int(math.log2(max(numSrcTiles, numDstTiles)))
-
-    hilbertPath = []
-    for row, cols in adj.items():
-        for col in cols:
-            srcTile = ceil_int(row, tileSize)
-            dstTile = ceil_int(col, tileSize)
-            dTile = xy2d(pow2, srcTile, dstTile)
-            hilbertPath += [(d, row, col)]
-    hilbertPath = sorted(hilbertPath)
-    parts = [c for c in chunks(hilbertPath, n)]
-    return parts
-
-def partition_bynz(adj, n, maxSrc, maxDst):
-    partitions = [[] for i in range(n)]
-
-    num_rows = len(adj.keys())
-    num_edges = sum(len(cols) for _, cols in adj.items())
-
-    edgeId = 0
-    for row, cols in adj.items():
-        for col in cols:
-            partitions[int(edgeId * n / num_edges)] += [(edgeId, row, col)]
-            edgeId += 1
-
-    return partitions
 
 
 def get_row_colors(partitions):
     accessedBy = {}
     for i, part in enumerate(partitions):
-        print(i)
         for _, r, c in part:
             if r not in accessedBy:
                 accessedBy[r] = set()
@@ -201,6 +138,7 @@ for bel_path in sys.argv[1:]:
 
     adj = {}
     maxDst = -1
+    maxSrc = -1
 
     logging.info("reading file")
     with open(bel_path, 'rb') as inf:
@@ -212,6 +150,7 @@ for bel_path in sys.argv[1:]:
             dst, src, _ = struct.unpack("<QQQ", buf)
 
             if src > dst:
+                maxSrc = max(maxSrc, src)
                 maxDst = max(maxDst, dst)
                 # update adjacency
                 if src not in adj:
@@ -242,8 +181,10 @@ for bel_path in sys.argv[1:]:
     logging.info("csr nzs covers {} pages".format(len(pageCounter)))
 
     logging.info("partitioning")
-    NUM_PARTS = 4
+
     edges = partition.rowwise(adj, NUM_PARTS)
+    edges = partition.hilbert(adj, NUM_PARTS, maxSrc, maxDst)
+
     for i in range(NUM_PARTS):
         print(sum(1 for _,_,p in edges if p == i), "edges in partition", i)
 
@@ -279,6 +220,8 @@ for bel_path in sys.argv[1:]:
 
     numPages = (csrNnz * ELEMENT_SIZE + PAGE_SIZE - 1) / PAGE_SIZE
     numRows = len(csrRowPtr) - 1
+    print(numPages, "pages")
+    print(numRows, "rows")
 
     print("cfx: page count")
     conflictCount = {}
@@ -288,7 +231,7 @@ for bel_path in sys.argv[1:]:
             conflictCount[cfx] = 0
         conflictCount[cfx] += 1
     for k,v in sorted(conflictCount.items()):
-        print(k, ":", v, pct(v/numPages))
+        print(k, ":", v, pct(float(v)/ float(numPages)))
 
     print("cfx: row count")
     conflictCount = {}
@@ -298,7 +241,7 @@ for bel_path in sys.argv[1:]:
             conflictCount[cfx] = 0
         conflictCount[cfx] += 1
     for k,v in sorted(conflictCount.items()):
-        print(k, ":", v, pct(v/ numRows))
+        print(k, ":", v, pct(float(v)/ float(numRows)))
 
 
     # plot edge assignments
