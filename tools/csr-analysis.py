@@ -11,20 +11,66 @@ from matplotlib.patches import Rectangle
 import partition
 
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 
-DEVICE_ID_TO_COLOR = {
-    0: "red",
-    1: "green",
-    2: "blue",
-    3: "orange",
-}
-
+def get_color(i):
+    colors = ["red", "green", "blue", "orange"]
+    return colors[i % len(colors)]
+    
+    
 PAGE_SIZE = 65536
 ELEMENT_SIZE = 4
 
+
+
+def plot_nonzeros(ax, edges, color):
+    y = [ src for src, _, _ in edges]
+    x = [ dst for _, dst, _ in edges]
+    ax.scatter(x,y, marker=',', color=color)
+    # ax.set_xlim(left=0)
+    # ax.set_ylim(top=0)
+
+
+def plot_pages(ax, pages, color):
+    if not pages:
+        return
+    rects = []
+    for p in pages:
+        rects.append(Rectangle( (p * PAGE_SIZE, 0), PAGE_SIZE, 1))
+    
+    maxP = max(p for p in pages)
+
+    colors = [color for p in pages]
+
+    pc = PatchCollection(rects, edgecolor=None, alpha=0.5, facecolors=colors)
+    cur_lim, _ = ax.get_xlim()
+    ax.set_xlim(right = max(cur_lim, (maxP + 1) * PAGE_SIZE))
+    # ax.set_xlim(right = max(rows))
+    # ax.set_ylim(top=0)
+    # ax.set_ylim(bottom = max(rows))
+
+    ax.add_collection(pc)
+
+def plot_rows(ax, rows, color):
+    rects = []
+    for r in rows:
+        rects.append(Rectangle( (0, r-0.5), r, 1))
+
+    colors = [color for r in rows]
+
+    pc = PatchCollection(rects, edgecolor=None, alpha=0.5, facecolors=colors)
+    ax.set_xlim(left = 0)
+    ax.set_xlim(right = max(rows))
+    ax.set_ylim(top=0)
+    ax.set_ylim(bottom = max(rows))
+
+    ax.add_collection(pc)
+
+
+
 def pct(f):
+    """return a perect of f rounded to two places"""
     x = f * 100
     if x > 10:
         return int(x + 0.5)
@@ -175,7 +221,7 @@ for bel_path in sys.argv[1:]:
     logging.info("csr nzs covers {} pages".format(len(pageCounter)))
 
     logging.info("partitioning")
-    NUM_PARTS = 2
+    NUM_PARTS = 4
     edges = partition.rowwise(adj, NUM_PARTS)
     for i in range(NUM_PARTS):
         print(sum(1 for _,_,p in edges if p == i), "edges in partition", i)
@@ -234,4 +280,43 @@ for bel_path in sys.argv[1:]:
         print(k, ":", v, pct(v/ numRows))
 
 
+    # plot edge assignments
+    logging.info("plotting nonzeros")
+    fig, ax = plt.subplots(1)
+    ax.invert_yaxis()
+    for i in range(NUM_PARTS):
+        partEdges  = [(s, d, p) for s,d,p in edges if p == i]
+        plot_nonzeros(ax, partEdges, get_color(i))
 
+    logging.info("plotting rows")
+    fig, ax = plt.subplots(1)
+    ax.invert_yaxis()
+    # plot row access conflicts
+    logging.info("enumerate row conflicts")
+    rows = [row for row, counter in enumerate(rowCounter) if len(counter) > 1]
+    logging.info("plot row conflicts")
+    plot_rows(ax, rows, 'gray')
+
+    # plot row accesses
+    for part in range(NUM_PARTS):
+        logging.info("enumerate rows for partition {}".format(part))
+        rows = [row for row, counter in enumerate(rowCounter) if len(counter) == 1 and next(iter(counter)) == part]
+        logging.info("plot rows")
+        plot_rows(ax, rows, get_color(part))
+
+    fig, ax = plt.subplots(1)
+    # plot page access conflicts
+    for page, counter in enumerate(rowCounter):
+        pages = [page for page, counter in enumerate(pageCounter) if len(counter) > 1]
+    plot_pages(ax, pages, 'gray')
+
+    # plot pages
+    for part in range(NUM_PARTS):
+        logging.info("enumerate pages for partition {}".format(part))
+        pages = [page for page, counter in enumerate(pageCounter) if len(counter) == 1 and next(iter(counter)) == part]
+        logging.info("plot pages")
+        plot_pages(ax, pages, get_color(part))
+
+    logging.basicConfig(level=logging.WARN)    
+
+    plt.show()
