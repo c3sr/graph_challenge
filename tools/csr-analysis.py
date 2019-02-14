@@ -210,6 +210,7 @@ for bel_path in sys.argv[1:]:
         conflictCount[cfx] += 1
     for k,v in sorted(conflictCount.items()):
         print(k, ":", v, pct(float(v)/ float(numPages)))
+    print("page dup:", sum(len(c) for c in pageCounter) / len(pageCounter))
 
     print("cfx: row count")
     conflictCount = {}
