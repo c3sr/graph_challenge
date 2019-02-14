@@ -75,6 +75,9 @@ def chunks(l, n):
         yield l[i*newn:i*newn+newn]
     yield l[n*newn-newn:]
 
+def ceil_int(num, den=1):
+    return int((num + den - 1) / den)
+
 def partition_hilbert(adj, n, maxSrc, maxDst):
 
     pow2 = 2 ** int(math.ceil(math.log2(max(maxSrc+1, maxDst+1))))
@@ -88,7 +91,25 @@ def partition_hilbert(adj, n, maxSrc, maxDst):
     parts = [c for c in chunks(hilbertPath, n)]
     return parts
 
+def partition_tiled_hilbert(adj, n, maxSrc, maxDst, tileSize = 32):
+    """ only order edges by which tileSize X tileSize tile they fall in"""
+    # determine the number of tiles in each dimension
+    numSrcTiles = ceil_int(maxSrc, tileSize)
+    numDstTiles = ceil_int(maxDst, tileSize)
 
+    # determine the largest power of 2 that covers the tiles
+    pow2 = 2 ** ceil_int(math.log2(max(numSrcTiles, numDstTiles)))
+
+    hilbertPath = []
+    for row, cols in adj.items():
+        for col in cols:
+            srcTile = ceil_int(row, tileSize)
+            dstTile = ceil_int(col, tileSize)
+            dTile = xy2d(pow2, srcTile, dstTile)
+            hilbertPath += [(d, row, col)]
+    hilbertPath = sorted(hilbertPath)
+    parts = [c for c in chunks(hilbertPath, n)]
+    return parts
 
 def partition_bynz(adj, n, maxSrc, maxDst):
     partitions = [[] for i in range(n)]
