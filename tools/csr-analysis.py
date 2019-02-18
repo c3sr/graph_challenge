@@ -9,6 +9,7 @@ from matplotlib.collections import PatchCollection
 from matplotlib.patches import Rectangle
 import partition
 import numpy as np
+import networkx as nx
 
 
 logging.basicConfig(level=logging.INFO)
@@ -152,6 +153,40 @@ for bel_path in sys.argv[1:]:
             csrColInd[curNzIdx] = col
             curNzIdx += 1
     csrRowPtr = np.append(csrRowPtr, curNzIdx)
+
+    logging.info("build page graph")
+    pageGraph = nx.DiGraph()
+    curNzIdx = 0
+    for row, cols in adj.items():
+
+        rowStartOff = csrRowPtr[row]
+        rowEndOff = csrRowPtr[row + 1]
+        if rowStartOff != rowEndOff:
+            pageFirst = int(rowStartOff * ELEMENT_SIZE / PAGE_SIZE)
+            pageLast = int((rowEndOff - 1) * ELEMENT_SIZE / PAGE_SIZE)
+            rowPages = range(pageFirst, pageLast+1)
+        else:
+            rowPages = []
+
+
+        for col in cols:
+            
+            colStartOff = csrRowPtr[col]
+            colEndOff = csrRowPtr[col + 1]
+            if colStartOff != colEndOff:
+                pageFirst = int(colStartOff * ELEMENT_SIZE / PAGE_SIZE)
+                pageLast = int((colEndOff - 1) * ELEMENT_SIZE / PAGE_SIZE)
+                colPages = range(pageFirst, pageLast+1)
+            else:
+                colPages = []
+
+            for rowPage in rowPages:
+                for colPage in colPages:
+                    if pageGraph.has_edge(rowPage, colPage):
+                        pageGraph[rowPage][colPage]['weight'] += 1
+                    else:
+                        pageGraph.add_edge(rowPage, colPage, weight=1)
+    # print(pageGraph.edges(data=True))
 
     rowCounter = [set() for i in range(len(csrRowPtr)-1)] # which partition accessed each row
     pageCounter = [set() for i in range(int((csrNnz * ELEMENT_SIZE + PAGE_SIZE - 1) / PAGE_SIZE))] # which partition accessed each page
