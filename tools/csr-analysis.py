@@ -8,6 +8,7 @@ import matplotlib.cm as cm
 from matplotlib.collections import PatchCollection
 from matplotlib.patches import Rectangle
 import partition
+import numpy as np
 
 
 logging.basicConfig(level=logging.INFO)
@@ -136,24 +137,24 @@ for bel_path in sys.argv[1:]:
             buf = inf.read(24)
 
     logging.info("nnz")
-    csrRowPtr = []
+    csrRowPtr = np.array([])
     csrNnz = sum(len(row) for row in adj.values())
-    csrColInd = [0 for _ in range(csrNnz)]
+    csrColInd = np.zeros(csrNnz)
 
     logging.info("building csr")
     curRow = 0
     curNzIdx = 0
     for row in sorted(adj.keys()):
         while curRow <= row:
-            csrRowPtr.append(curNzIdx)
+            csrRowPtr = np.append(csrRowPtr, curNzIdx)
             curRow += 1
         for col in adj[row]:
             csrColInd[curNzIdx] = col
             curNzIdx += 1
-    csrRowPtr.append(curNzIdx)
+    csrRowPtr = np.append(csrRowPtr, curNzIdx)
 
-    rowCounter = [set() for i in range(len(csrRowPtr)-1)] # which device accessed each row
-    pageCounter = [set() for i in range(int((csrNnz * ELEMENT_SIZE + PAGE_SIZE - 1) / PAGE_SIZE))] # which device accessed each page
+    rowCounter = [set() for i in range(len(csrRowPtr)-1)] # which partition accessed each row
+    pageCounter = [set() for i in range(int((csrNnz * ELEMENT_SIZE + PAGE_SIZE - 1) / PAGE_SIZE))] # which partition accessed each page
     logging.info("csr nzs covers {} pages".format(len(pageCounter)))
 
     logging.info("partitioning")
@@ -167,9 +168,7 @@ for bel_path in sys.argv[1:]:
     for i in range(NUM_PARTS):
         print(sum(1 for _,_,p in edges if p == i), "edges in partition", i)
 
-
-
-
+    logging.info("determining row and page accesses for each partition")
     for edge in edges:
         src, dst, part = edge
         # row access for src
