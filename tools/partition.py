@@ -123,14 +123,27 @@ def tiled_hilbert(adj, n, maxSrc, maxDst, tileSize = 50000):
 
     hilbertPath = []
     for row, cols in adj.items():
-		srcTile = ceil_int(row, tileSize)
-		for col in cols:
-			dstTile = ceil_int(col, tileSize)
-			dTile = xy2d(pow2, dstTile, srcTile)
-			hilbertPath += [(dTile, row, col)]
+        srcTile = ceil_int(row, tileSize)
+        for col in cols:
+            dstTile = ceil_int(col, tileSize)
+            dTile = xy2d(pow2, dstTile, srcTile)
+            hilbertPath += [(dTile, row, col)]
     hilbertPath = sorted(hilbertPath)
     edges = []
     for part, chunk in enumerate(chunks(hilbertPath, n)):
         for (_, src, dst) in chunk:
             edges.append((src, dst, part))
+    return edges
+
+def metis(adj, n):
+    import networkx as nx
+    import pymetis
+    G = nx.DiGraph()
+    for row, cols in adj.items():
+        for col in cols:
+            G.add_edge(row-1, col-1)
+    (edgecuts, parts) = pymetis.part_graph(n, adjacency=G)
+    edges = []
+    for src, dst in G.edges():
+        edges.append((src, dst, parts[src]))
     return edges

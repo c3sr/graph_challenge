@@ -29,7 +29,7 @@ NUM_PARTS = 4
 def plot_nonzeros(ax, edges, color):
     y = [ src for src, _, _ in edges]
     x = [ dst for _, dst, _ in edges]
-    ax.scatter(x,y, marker=',', color=color)
+    ax.scatter(x,y, s=1, marker=',', color=color)
     # ax.set_xlim(left=0)
     # ax.set_ylim(top=0)
 
@@ -163,7 +163,8 @@ for bel_path in sys.argv[1:]:
     # edges = partition.hilbert(adj, NUM_PARTS, maxSrc, maxDst)
     # edges = partition.tiled_hilbert(adj, NUM_PARTS, maxSrc, maxDst)
     # edges = partition.strided_rows(adj, NUM_PARTS)
-    edges = partition.strided_nnz(adj, NUM_PARTS)
+    # edges = partition.strided_nnz(adj, NUM_PARTS)
+    edges = partition.metis(adj, NUM_PARTS)
 
     for i in range(NUM_PARTS):
         print(sum(1 for _,_,p in edges if p == i), "edges in partition", i)
