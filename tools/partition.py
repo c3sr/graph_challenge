@@ -136,14 +136,9 @@ def tiled_hilbert(adj, n, maxSrc, maxDst, tileSize = 50000):
     return edges
 
 def metis(adj, n):
-    import networkx as nx
     import pymetis
-    G = nx.DiGraph()
-    for row, cols in adj.items():
-        for col in cols:
-            G.add_edge(row-1, col-1)
-    (edgecuts, parts) = pymetis.part_graph(n, adjacency=G)
+    (edgecuts, parts) = pymetis.part_graph(n, adjacency=adj)
     edges = []
-    for src, dst in G.edges():
+    for src, dst in adj.edges():
         edges.append((src, dst, parts[src]))
     return edges

@@ -10,6 +10,7 @@ from matplotlib.patches import Rectangle
 import partition
 import numpy as np
 import networkx as nx
+import pymetis
 
 
 logging.basicConfig(level=logging.INFO)
@@ -114,7 +115,8 @@ def ceil_int(num, den=1):
 for bel_path in sys.argv[1:]:
     assert bel_path.endswith(".bel")
 
-    adj = {}
+    adj = nx.DiGraph()
+    # adj.add_node(0)
     maxDst = -1
     maxSrc = -1
 
@@ -126,70 +128,106 @@ for bel_path in sys.argv[1:]:
                 logging.error("expected 24B, read {}B from {}".format(len(buf), bel_path))
                 sys.exit(1)
             dst, src, _ = struct.unpack("<QQQ", buf)
-
+            dst -= 1
+            src -= 1
+            assert dst >= 0
+            assert src >= 0
             if src > dst:
                 maxSrc = max(maxSrc, src)
                 maxDst = max(maxDst, dst)
                 # update adjacency
-                if src not in adj:
-                    adj[src] = []
-                adj[src].append(dst)
+                adj.add_edge(src, dst)
 
             buf = inf.read(24)
 
-    logging.info("nnz")
-    csrRowPtr = np.array([])
-    csrNnz = sum(len(row) for row in adj.values())
-    csrColInd = np.zeros(csrNnz)
 
-    logging.info("building csr")
-    curRow = 0
-    curNzIdx = 0
-    for row in sorted(adj.keys()):
-        while curRow <= row:
-            csrRowPtr = np.append(csrRowPtr, curNzIdx)
-            curRow += 1
-        for col in adj[row]:
-            csrColInd[curNzIdx] = col
-            curNzIdx += 1
-    csrRowPtr = np.append(csrRowPtr, curNzIdx)
+    logging.info("sort node list")
+    nodelist = sorted(adj.nodes())
+    logging.info("build csr")
+    csr = nx.to_scipy_sparse_matrix(adj, nodelist=nodelist)
+
 
     logging.info("build page graph")
-    pageGraph = nx.DiGraph()
+    pageGraph = nx.Graph()
     curNzIdx = 0
-    for row, cols in adj.items():
 
-        rowStartOff = csrRowPtr[row]
-        rowEndOff = csrRowPtr[row + 1]
-        if rowStartOff != rowEndOff:
+
+    for row, col in adj.edges():
+        # print(row)
+        rowStartOff = csr.indptr[row]
+        rowEndOff = csr.indptr[row + 1]
+        rowNnz = rowEndOff - rowStartOff
+        assert rowNnz >= 0
+        if rowNnz > 0:
             pageFirst = int(rowStartOff * ELEMENT_SIZE / PAGE_SIZE)
             pageLast = int((rowEndOff - 1) * ELEMENT_SIZE / PAGE_SIZE)
             rowPages = range(pageFirst, pageLast+1)
         else:
             rowPages = []
 
+        colStartOff = csr.indptr[col]
+        colEndOff = csr.indptr[col + 1]
+        colNnz = colEndOff - colStartOff
+        assert colNnz >= 0
+        if colNnz > 0:
+            pageFirst = int(colStartOff * ELEMENT_SIZE / PAGE_SIZE)
+            pageLast = int((colEndOff - 1) * ELEMENT_SIZE / PAGE_SIZE)
+            colPages = range(pageFirst, pageLast+1) 
+        else:
+            colPages = []
 
-        for col in cols:
-            
-            colStartOff = csrRowPtr[col]
-            colEndOff = csrRowPtr[col + 1]
-            if colStartOff != colEndOff:
-                pageFirst = int(colStartOff * ELEMENT_SIZE / PAGE_SIZE)
-                pageLast = int((colEndOff - 1) * ELEMENT_SIZE / PAGE_SIZE)
-                colPages = range(pageFirst, pageLast+1)
-            else:
-                colPages = []
+        for rowPage in rowPages:
+            for colPage in colPages:
+                if pageGraph.has_edge(rowPage, colPage):
+                    pageGraph[rowPage][colPage]['weight'] += 1
+                else:
+                    pageGraph.add_edge(rowPage, colPage, weight=1)
 
-            for rowPage in rowPages:
-                for colPage in colPages:
-                    if pageGraph.has_edge(rowPage, colPage):
-                        pageGraph[rowPage][colPage]['weight'] += 1
-                    else:
-                        pageGraph.add_edge(rowPage, colPage, weight=1)
+
+
+    logging.info("partition pageGraph")
+    (edgecuts, parts) = pymetis.part_graph(NUM_PARTS, adjacency=pageGraph)
+    print(edgecuts, "edgecuts")
+
+
+    # logging.info("plot pageGraph")
+    # fig, ax = plt.subplots(1)
+    # labels = nx.get_edge_attributes(pageGraph,'weight')
+    # # colors = [float(w)/1000 for _, _, w in pageGraph.edges.data('weight')]
+    # # print(colors)
+    # ax.set_title("Unweighted page partition")
+    # nx.drawing.draw_circular(pageGraph, ax=ax, node_color=parts, with_labels=True)
+    # pos=nx.get_node_attributes(pageGraph,'pos')
+    # nx.draw_networkx_edge_labels(pageGraph, pos=nx.circular_layout(pageGraph), ax=ax, edge_labels=labels)
+
+    logging.info("build page graph csr")
+    pageGraphCsr = nx.to_scipy_sparse_matrix(pageGraph, weight='weight')
+
+    logging.info('weighted page graph partition')
+    xadj = pageGraphCsr.indptr
+    adjncy = pageGraphCsr.indices
+    adjwgt = pageGraphCsr.data
+    (edgecuts, parts) = pymetis.part_graph(NUM_PARTS, xadj=xadj, adjncy=adjncy, eweights=adjwgt)
+    print(edgecuts, "edge cuts")
+    # sys.exit(1)
+
+
     # print(pageGraph.edges(data=True))
+    # logging.info("plot pageGraph")
+    # fig, ax = plt.subplots(1)
+    # ax.set_title("Weighted page partition")
+    # nx.drawing.draw_kamada_kawai(pageGraph, ax=ax, node_color=parts, with_labels=True)
+    # pos=nx.get_node_attributes(pageGraph,'pos')
+    # labels = nx.get_edge_attributes(pageGraph,'weight')
+    # nx.draw_networkx_edge_labels(pageGraph, pos=nx.kamada_kawai_layout(pageGraph), ax=ax, edge_labels=labels)
+    # plt.show()
 
-    rowCounter = [set() for i in range(len(csrRowPtr)-1)] # which partition accessed each row
-    pageCounter = [set() for i in range(int((csrNnz * ELEMENT_SIZE + PAGE_SIZE - 1) / PAGE_SIZE))] # which partition accessed each page
+
+    logging.info("build line graph")
+    lg = nx.line_graph(adj)
+
+    rowCounter = [set() for i in range(len(csr.indptr)-1)] # which partition accessed each row
+    pageCounter = [set() for i in range(int((csr.nnz * ELEMENT_SIZE + PAGE_SIZE - 1) / PAGE_SIZE))] # which partition accessed each page
     logging.info("csr nzs covers {} pages".format(len(pageCounter)))
 
     logging.info("partitioning")
@@ -214,8 +252,8 @@ for bel_path in sys.argv[1:]:
         rowCounter[dst].add(part)
 
         # page access for src
-        rowStartOff = csrRowPtr[src]
-        rowEndOff = csrRowPtr[src + 1]
+        rowStartOff = csr.indptr[src]
+        rowEndOff = csr.indptr[src + 1]
         if rowStartOff != rowEndOff:
             pageFirst = int(rowStartOff * ELEMENT_SIZE / PAGE_SIZE)
             pageLast = int((rowEndOff - 1) * ELEMENT_SIZE / PAGE_SIZE)
@@ -223,8 +261,8 @@ for bel_path in sys.argv[1:]:
                 pageCounter[page].add(part)
 
         # page access for dst
-        rowStartOff = csrRowPtr[dst]
-        rowEndOff = csrRowPtr[dst + 1]
+        rowStartOff = csr.indptr[dst]
+        rowEndOff = csr.indptr[dst + 1]
         if rowStartOff != rowEndOff:
             pageFirst = int(rowStartOff * ELEMENT_SIZE / PAGE_SIZE)
             pageLast = int((rowEndOff - 1) * ELEMENT_SIZE / PAGE_SIZE)
@@ -232,8 +270,8 @@ for bel_path in sys.argv[1:]:
                 pageCounter[page].add(part)
 
 
-    numPages = (csrNnz * ELEMENT_SIZE + PAGE_SIZE - 1) / PAGE_SIZE
-    numRows = len(csrRowPtr) - 1
+    numPages = (csr.nnz * ELEMENT_SIZE + PAGE_SIZE - 1) / PAGE_SIZE
+    numRows = len(csr.indptr) - 1
     print(numPages, "pages")
     print(numRows, "rows")
 
