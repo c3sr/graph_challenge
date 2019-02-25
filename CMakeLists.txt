@@ -8,8 +8,8 @@ include("cmake/HunterGate.cmake")
 # LOCAL specifies that cmake/Hunter/config.cmake controls our pagacke versions and sources
 # That file specifies that pangolin should be loaded from the git submodule in this repository
 HunterGate(
-    URL "https://github.com/ruslo/hunter/archive/v0.23.89.tar.gz"
-    SHA1 "a370290a8b32987755a36d64807bf8c7f5b61730"
+    URL "https://github.com/ruslo/hunter/archive/v0.23.115.tar.gz"
+    SHA1 "1b3f3addc801405769edbb7ebbe701223db3efa6"
     LOCAL
 )
 
