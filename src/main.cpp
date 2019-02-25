@@ -7,7 +7,7 @@
 int main(int argc, char **argv)
 {
 
-	Config config;
+	pangolin::Config config;
 
 	std::string adjacencyListPath;
 	bool help = false;
@@ -55,11 +55,11 @@ int main(int argc, char **argv)
 	// set logging level
 	if (verbose)
 	{
-		logger::console->set_level(spdlog::level::trace);
+		pangolin::logger::set_level(pangolin::logger::Level::TRACE);
 	}
 	else if (debug)
 	{
-		logger::console->set_level(spdlog::level::debug);
+		pangolin::logger::set_level(pangolin::logger::Level::DEBUG);
 	}
 
 	// log command line before much else happens
@@ -95,8 +95,7 @@ int main(int argc, char **argv)
 #ifndef NDEBUG
 	LOG(warn, "Not a release build");
 #endif
-	TriangleCounter *tc;
-	tc = TriangleCounter::CreateTriangleCounter(config);
+	pangolin::TriangleCounter *tc = pangolin::TriangleCounter::CreateTriangleCounter(config);
 
 	auto start = std::chrono::system_clock::now();
 	tc->read_data(adjacencyListPath);
