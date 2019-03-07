@@ -15,11 +15,6 @@ HunterGate(
 
 project(PangolinExample LANGUAGES CXX CUDA VERSION 0.1.0)
 
-# add our example as an executable
-add_executable(gc src/main.cpp)
-
-target_include_directories(gc PRIVATE thirdparty)
-
 # add pangolin targets
 if (EXTERNAL_PANGOLIN)
     find_package(pangolin CONFIG REQUIRED)
@@ -27,5 +22,6 @@ else()
     add_subdirectory("thirdparty/pangolin")
 endif()
 
-# link against the 32-bit pangolin library
-target_link_libraries(gc pangolin::pangolin32)
+add_subdirectory(src)
+
+
