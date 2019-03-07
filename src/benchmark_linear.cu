@@ -115,7 +115,7 @@ int main(int argc, char **argv) {
   for (auto &counter : counters) {
     const size_t edgeStop = std::max(edgeStart + edgesPerGPU, csr.nnz());
     const size_t numEdges = edgeStop - edgeStart;
-    counter.count_async(csr, edgeStart, numEdges);
+    counter.count_async(csr.view(), edgeStart, numEdges);
     edgeStart += edgesPerGPU;
   }
 
