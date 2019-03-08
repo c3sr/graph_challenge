@@ -233,11 +233,11 @@ for bel_path in sys.argv[1:]:
     logging.info("partitioning")
 
     # edges = partition.nnz(adj, NUM_PARTS)
-    # edges = partition.hilbert(adj, NUM_PARTS, maxSrc, maxDst)
+    edges = partition.hilbert(adj, NUM_PARTS, maxSrc, maxDst)
     # edges = partition.tiled_hilbert(adj, NUM_PARTS, maxSrc, maxDst)
     # edges = partition.strided_rows(adj, NUM_PARTS)
     # edges = partition.strided_nnz(adj, NUM_PARTS)
-    edges = partition.metis(adj, NUM_PARTS)
+    # edges = partition.metis(adj, NUM_PARTS)
 
     for i in range(NUM_PARTS):
         print(sum(1 for _,_,p in edges if p == i), "edges in partition", i)
