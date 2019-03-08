@@ -31,3 +31,4 @@ endfunction()
 
 add_exe(NAME gc SRCS main.cpp)
 add_exe(NAME benchmark-linear SRCS benchmark_linear.cu)
+add_exe(NAME benchmark-binary SRCS benchmark_binary.cu)

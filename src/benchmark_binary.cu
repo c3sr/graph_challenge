@@ -7,10 +7,9 @@
 
 int main(int argc, char **argv) {
 
-  pangolin::Config config;
-
   std::vector<int> gpus;
   std::string path;
+  int coarsening = 1;
   bool help = false;
   bool debug = false;
   bool verbose = false;
@@ -21,6 +20,8 @@ int main(int argc, char **argv) {
   cli = cli |
         clara::Opt(verbose)["--verbose"]("print verbose messages to stderr");
   cli = cli | clara::Opt(gpus, "ids")["-g"]("gpus to use");
+  cli = cli | clara::Opt(coarsening,
+                         "coarsening")["-c"]("Number of elements per thread");
   cli =
       cli | clara::Arg(path, "graph file")("Path to adjacency list").required();
 
@@ -83,11 +84,14 @@ int main(int argc, char **argv) {
 
   // create csr
   start = std::chrono::system_clock::now();
-  auto upperTriangular = [](pangolin::EdgeTy<uint64_t> e) {
+  auto upperTriangularFilter = [](pangolin::EdgeTy<uint64_t> e) {
     return e.first < e.second;
   };
+  auto lowerTriangularFilter = [](pangolin::EdgeTy<uint64_t> e) {
+    return e.first > e.second;
+  };
   auto csr = pangolin::COO<uint64_t>::from_edges(edges.begin(), edges.end(),
-                                                 upperTriangular);
+                                                 upperTriangularFilter);
   LOG(debug, "nnz = {}", csr.nnz());
   elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
   LOG(info, "create CSR time {}s", elapsed);
@@ -96,10 +100,10 @@ int main(int argc, char **argv) {
   start = std::chrono::system_clock::now();
 
   // create async counters
-  std::vector<pangolin::LinearTC> counters;
+  std::vector<pangolin::BinaryTC> counters;
   for (int dev : gpus) {
     LOG(debug, "create device {} counter", dev);
-    counters.push_back(pangolin::LinearTC(dev));
+    counters.push_back(pangolin::BinaryTC(dev));
   }
 
   // determine the number of edges per gpu
@@ -112,7 +116,7 @@ int main(int argc, char **argv) {
     const size_t edgeStop = std::min(edgeStart + edgesPerGPU, csr.nnz());
     const size_t numEdges = edgeStop - edgeStart;
     LOG(debug, "start async count on GPU {}", counter.device());
-    counter.count_async(csr.view(), numEdges, edgeStart);
+    counter.count_async(csr.view(), numEdges, edgeStart, coarsening);
     edgeStart += edgesPerGPU;
   }
 
