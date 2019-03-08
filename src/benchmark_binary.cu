@@ -10,6 +10,7 @@ int main(int argc, char **argv) {
   std::vector<int> gpus;
   std::string path;
   int coarsening = 1;
+  bool prefetch = false;
   bool help = false;
   bool debug = false;
   bool verbose = false;
@@ -22,6 +23,8 @@ int main(int argc, char **argv) {
   cli = cli | clara::Opt(gpus, "ids")["-g"]("gpus to use");
   cli = cli | clara::Opt(coarsening,
                          "coarsening")["-c"]("Number of elements per thread");
+  cli = cli | clara::Opt(prefetch)["--prefetch"](
+                  "prefetch data to GPUs before count");
   cli =
       cli | clara::Arg(path, "graph file")("Path to adjacency list").required();
 
@@ -95,6 +98,18 @@ int main(int argc, char **argv) {
   LOG(debug, "nnz = {}", csr.nnz());
   elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
   LOG(info, "create CSR time {}s", elapsed);
+
+  // prefetch
+  start = std::chrono::system_clock::now();
+  if (prefetch) {
+    for (const auto &gpu : gpus) {
+      csr.read_only_and_prefetch(gpu);
+      CUDA_RUNTIME(cudaSetDevice(gpu));
+      CUDA_RUNTIME(cudaDeviceSynchronize());
+    }
+  }
+  elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
+  LOG(info, "prefetch CSR time {}s", elapsed);
 
   // count triangles
   start = std::chrono::system_clock::now();
