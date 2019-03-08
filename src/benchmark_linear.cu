@@ -75,6 +75,11 @@ int main(int argc, char **argv) {
   LOG(warn, "Not a release build");
 #endif
 
+  if (gpus.empty()) {
+    LOG(warn, "no GPUs provided on command line, using GPU 0");
+    gpus.push_back(0);
+  }
+
   // read data
   auto start = std::chrono::system_clock::now();
   pangolin::EdgeListFile file(path);
@@ -95,6 +100,7 @@ int main(int argc, char **argv) {
   };
   auto csr = pangolin::COO<uint64_t>::from_edges(edges.begin(), edges.end(),
                                                  upperTriangular);
+  LOG(debug, "nnz = {}", csr.nnz());
   elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
   LOG(info, "create CSR time {}s", elapsed);
 
@@ -104,31 +110,35 @@ int main(int argc, char **argv) {
   // create async counters
   std::vector<pangolin::LinearTC> counters;
   for (int dev : gpus) {
+    LOG(debug, "create device {} counter", dev);
     counters.push_back(pangolin::LinearTC(dev));
   }
 
   // determine the number of edges per gpu
-  size_t edgesPerGPU = (csr.nnz() + gpus.size() - 1) / gpus.size();
+  const size_t edgesPerGPU = (csr.nnz() + gpus.size() - 1) / gpus.size();
+  LOG(debug, "{} edges per GPU", edgesPerGPU);
 
   // launch counting operations
   size_t edgeStart = 0;
   for (auto &counter : counters) {
-    const size_t edgeStop = std::max(edgeStart + edgesPerGPU, csr.nnz());
+    const size_t edgeStop = std::min(edgeStart + edgesPerGPU, csr.nnz());
     const size_t numEdges = edgeStop - edgeStart;
-    counter.count_async(csr.view(), edgeStart, numEdges);
+    LOG(debug, "start async count on GPU {}", counter.device());
+    counter.count_async(csr.view(), numEdges, edgeStart);
     edgeStart += edgesPerGPU;
   }
 
   // wait for counting operations to finish
   uint64_t total = 0;
   for (auto &counter : counters) {
+    LOG(debug, "wait for counter on GPU {}", counter.device());
     counter.sync();
     total += counter.count();
   }
 
   elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
   LOG(info, "count time {}s", elapsed);
-  LOG(info, "{} triangles", total);
+  LOG(info, "{} triangles ({} teps)", total, csr.nnz() / elapsed);
 
   return 0;
 }
