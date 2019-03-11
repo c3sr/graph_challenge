@@ -11,9 +11,11 @@ int main(int argc, char **argv) {
 
   std::vector<int> gpus;
   std::string path;
+  int iters = 1;
   bool help = false;
   bool debug = false;
   bool verbose = false;
+  bool prefetch = false;
 
   clara::Parser cli;
   cli = cli | clara::Help(help);
@@ -21,6 +23,9 @@ int main(int argc, char **argv) {
   cli = cli |
         clara::Opt(verbose)["--verbose"]("print verbose messages to stderr");
   cli = cli | clara::Opt(gpus, "ids")["-g"]("gpus to use");
+  cli = cli | clara::Opt(prefetch)["--prefetch"](
+                  "prefetch data to GPUs before count");
+  cli = cli | clara::Opt(iters, "N")["-n"]("number of counts");
   cli =
       cli | clara::Arg(path, "graph file")("Path to adjacency list").required();
 
@@ -81,52 +86,79 @@ int main(int argc, char **argv) {
   LOG(info, "read_data time {}s", elapsed);
   LOG(debug, "read {} edges", edges.size());
 
-  // create csr
-  start = std::chrono::system_clock::now();
-  auto upperTriangular = [](pangolin::EdgeTy<uint64_t> e) {
-    return e.first < e.second;
-  };
-  auto csr = pangolin::COO<uint64_t>::from_edges(edges.begin(), edges.end(),
-                                                 upperTriangular);
-  LOG(debug, "nnz = {}", csr.nnz());
-  elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
-  LOG(info, "create CSR time {}s", elapsed);
+  // create csr and count `iters` times
+  std::vector<double> times;
+  uint64_t nnz;
+  uint64_t tris;
+  for (int i = 0; i < iters; ++i) {
+    // create csr
+    start = std::chrono::system_clock::now();
+    auto upperTriangular = [](pangolin::EdgeTy<uint64_t> e) {
+      return e.first < e.second;
+    };
+    auto csr = pangolin::COO<uint64_t>::from_edges(edges.begin(), edges.end(),
+                                                   upperTriangular);
+    LOG(debug, "nnz = {}", csr.nnz());
+    elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
+    LOG(info, "create CSR time {}s", elapsed);
 
-  // count triangles
-  start = std::chrono::system_clock::now();
+    // prefetch
+    start = std::chrono::system_clock::now();
+    if (prefetch) {
+      for (const auto &gpu : gpus) {
+        csr.read_only_and_prefetch(gpu);
+        CUDA_RUNTIME(cudaSetDevice(gpu));
+        CUDA_RUNTIME(cudaDeviceSynchronize());
+      }
+    }
+    elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
+    LOG(info, "prefetch CSR time {}s", elapsed);
 
-  // create async counters
-  std::vector<pangolin::LinearTC> counters;
-  for (int dev : gpus) {
-    LOG(debug, "create device {} counter", dev);
-    counters.push_back(pangolin::LinearTC(dev));
+    // count triangles
+    start = std::chrono::system_clock::now();
+
+    // create async counters
+    std::vector<pangolin::LinearTC> counters;
+    for (int dev : gpus) {
+      LOG(debug, "create device {} counter", dev);
+      counters.push_back(pangolin::LinearTC(dev));
+    }
+
+    // determine the number of edges per gpu
+    const size_t edgesPerGPU = (csr.nnz() + gpus.size() - 1) / gpus.size();
+    LOG(debug, "{} edges per GPU", edgesPerGPU);
+
+    // launch counting operations
+    size_t edgeStart = 0;
+    for (auto &counter : counters) {
+      const size_t edgeStop = std::min(edgeStart + edgesPerGPU, csr.nnz());
+      const size_t numEdges = edgeStop - edgeStart;
+      LOG(debug, "start async count on GPU {}", counter.device());
+      counter.count_async(csr.view(), numEdges, edgeStart);
+      edgeStart += edgesPerGPU;
+    }
+
+    // wait for counting operations to finish
+    uint64_t total = 0;
+    for (auto &counter : counters) {
+      LOG(debug, "wait for counter on GPU {}", counter.device());
+      counter.sync();
+      total += counter.count();
+    }
+
+    elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
+    LOG(info, "count time {}s", elapsed);
+    LOG(info, "{} triangles ({} teps)", total, csr.nnz() / elapsed);
+    times.push_back(elapsed);
+    tris = total;
+    nnz = csr.nnz();
   }
 
-  // determine the number of edges per gpu
-  const size_t edgesPerGPU = (csr.nnz() + gpus.size() - 1) / gpus.size();
-  LOG(debug, "{} edges per GPU", edgesPerGPU);
-
-  // launch counting operations
-  size_t edgeStart = 0;
-  for (auto &counter : counters) {
-    const size_t edgeStop = std::min(edgeStart + edgesPerGPU, csr.nnz());
-    const size_t numEdges = edgeStop - edgeStart;
-    LOG(debug, "start async count on GPU {}", counter.device());
-    counter.count_async(csr.view(), numEdges, edgeStart);
-    edgeStart += edgesPerGPU;
+  std::cout << path << ",\t" << nnz << ",\t" << tris;
+  for (const auto &t : times) {
+    std::cout << ",\t" << t;
   }
-
-  // wait for counting operations to finish
-  uint64_t total = 0;
-  for (auto &counter : counters) {
-    LOG(debug, "wait for counter on GPU {}", counter.device());
-    counter.sync();
-    total += counter.count();
-  }
-
-  elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
-  LOG(info, "count time {}s", elapsed);
-  LOG(info, "{} triangles ({} teps)", total, csr.nnz() / elapsed);
+  std::cout << std::endl;
 
   return 0;
 }
