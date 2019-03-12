@@ -40,7 +40,7 @@ with open(tsv_path, 'rb') as inf, open(bel_path, 'wb') as outf:
             srcBytes = struct.pack("<Q", int(src))
             weightBytes = struct.pack("<Q", int(weight))
         except ValueError as e:
-            print("error while converting {} to {}: {}".format(tsv_bath, bel_path, e))
+            print("error while converting {} to {}: {}".format(tsv_path, bel_path, e))
             sys.exit(1)
         outf.write(dstBytes + srcBytes + weightBytes)
 
