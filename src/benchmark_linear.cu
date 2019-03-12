@@ -133,7 +133,8 @@ int main(int argc, char **argv) {
     for (auto &counter : counters) {
       const size_t edgeStop = std::min(edgeStart + edgesPerGPU, csr.nnz());
       const size_t numEdges = edgeStop - edgeStart;
-      LOG(debug, "start async count on GPU {}", counter.device());
+      LOG(debug, "start async count on GPU {} ({} edges)", counter.device(),
+          numEdges);
       counter.count_async(csr.view(), numEdges, edgeStart);
       edgeStart += edgesPerGPU;
     }
