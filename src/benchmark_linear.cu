@@ -1,6 +1,8 @@
 #include <fmt/format.h>
 #include <iostream>
 
+#include <nvToolsExt.h>
+
 #include "clara/clara.hpp"
 #include "pangolin/pangolin.cuh"
 #include "pangolin/pangolin.hpp"
@@ -110,6 +112,7 @@ int main(int argc, char **argv) {
     LOG(info, "create CSR time {}s", elapsed);
 
     // read-mostly
+    nvtxRangePush("read-mostly");
     start = std::chrono::system_clock::now();
     if (readMostly) {
       for (const auto &gpu : gpus) {
@@ -119,9 +122,11 @@ int main(int argc, char **argv) {
       }
     }
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
+    nvtxRangePop();
     LOG(info, "read-mostly CSR time {}s", elapsed);
 
     // accessed-by
+    nvtxRangePush("accessed-by");
     start = std::chrono::system_clock::now();
     if (accessedBy) {
       for (const auto &gpu : gpus) {
@@ -131,9 +136,11 @@ int main(int argc, char **argv) {
       }
     }
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
+    nvtxRangePop();
     LOG(info, "accessed-by CSR time {}s", elapsed);
 
     // prefetch
+    nvtxRangePush("prefetch");
     start = std::chrono::system_clock::now();
     if (prefetchAsync) {
       for (const auto &gpu : gpus) {
@@ -143,9 +150,11 @@ int main(int argc, char **argv) {
       }
     }
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
+    nvtxRangePop();
     LOG(info, "prefetch CSR time {}s", elapsed);
 
     // count triangles
+    nvtxRangePush("count");
     start = std::chrono::system_clock::now();
 
     // create async counters
@@ -179,6 +188,7 @@ int main(int argc, char **argv) {
     }
 
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
+    nvtxRangePop();
     LOG(info, "count time {}s", elapsed);
     LOG(info, "{} triangles ({} teps)", total, csr.nnz() / elapsed);
     times.push_back(elapsed);

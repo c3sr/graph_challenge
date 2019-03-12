@@ -27,8 +27,9 @@ function(add_exe)
     -lineinfo>
     )
     target_link_libraries(${PARSED_ARGS_NAME} PUBLIC pangolin::pangolin)
+    target_link_libraries(${PARSED_ARGS_NAME} PUBLIC nvToolsExt)
 endfunction()
 
-add_exe(NAME gc SRCS main.cpp)
+add_exe(NAME gc SRCS main.cu)
 add_exe(NAME benchmark-linear SRCS benchmark_linear.cu)
 add_exe(NAME benchmark-binary SRCS benchmark_binary.cu)
