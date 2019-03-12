@@ -11,10 +11,13 @@ int main(int argc, char **argv) {
   std::string path;
   int coarsening = 1;
   int iters = 1;
-  bool prefetch = false;
   bool help = false;
   bool debug = false;
   bool verbose = false;
+
+  bool readMostly = false;
+  bool accessedBy = false;
+  bool prefetchAsync = false;
 
   clara::Parser cli;
   cli = cli | clara::Help(help);
@@ -24,8 +27,12 @@ int main(int argc, char **argv) {
   cli = cli | clara::Opt(gpus, "dev ids")["-g"]("gpus to use");
   cli = cli | clara::Opt(coarsening,
                          "coarsening")["-c"]("Number of elements per thread");
-  cli = cli | clara::Opt(prefetch)["--prefetch"](
-                  "prefetch data to GPUs before count");
+  cli = cli | clara::Opt(readMostly)["--read-mostly"](
+                  "mark data as read-mostly by all gpus before kernel");
+  cli = cli | clara::Opt(accessedBy)["--accessed-by"](
+                  "mark data as accessed-by all GPUs before kernel");
+  cli = cli | clara::Opt(prefetchAsync)["--prefetch-async"](
+                  "prefetch data to all GPUs before kernel");
   cli = cli | clara::Opt(iters, "N")["-n"]("number of counts");
   cli =
       cli | clara::Arg(path, "graph file")("Path to adjacency list").required();
@@ -106,11 +113,35 @@ int main(int argc, char **argv) {
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
     LOG(info, "create CSR time {}s", elapsed);
 
+    // read-mostly
+    start = std::chrono::system_clock::now();
+    if (readMostly) {
+      for (const auto &gpu : gpus) {
+        csr.read_mostly(gpu);
+        CUDA_RUNTIME(cudaSetDevice(gpu));
+        CUDA_RUNTIME(cudaDeviceSynchronize());
+      }
+    }
+    elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
+    LOG(info, "read-mostly CSR time {}s", elapsed);
+
+    // accessed-by
+    start = std::chrono::system_clock::now();
+    if (accessedBy) {
+      for (const auto &gpu : gpus) {
+        csr.accessed_by(gpu);
+        CUDA_RUNTIME(cudaSetDevice(gpu));
+        CUDA_RUNTIME(cudaDeviceSynchronize());
+      }
+    }
+    elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
+    LOG(info, "accessed-by CSR time {}s", elapsed);
+
     // prefetch
     start = std::chrono::system_clock::now();
-    if (prefetch) {
+    if (prefetchAsync) {
       for (const auto &gpu : gpus) {
-        csr.read_only_and_prefetch(gpu);
+        csr.prefetch_async(gpu);
         CUDA_RUNTIME(cudaSetDevice(gpu));
         CUDA_RUNTIME(cudaDeviceSynchronize());
       }
