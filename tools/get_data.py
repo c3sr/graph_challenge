@@ -61,6 +61,7 @@ GRAPHS = [
     ("https://graphchallenge.s3.amazonaws.com/snap/oregon1_010526/oregon1_010526_adj.tsv", "18f22ac1487c9a389332fbcf4cb1eebc"), # 548K
 
     ("https://graphchallenge.s3.amazonaws.com/snap/flickrEdges/flickrEdges_adj.tsv", "e46e6559fb0239593fae6b7f1bb09a40"),
+    ("https://graphchallenge.s3.amazonaws.com/snap/friendster/friendster_adj.tsv.gz", "9dda211732495a4c8b99365c15bc5b4a"), # 17.46 G
     # MAWI Datasets
     ("https://graphchallenge.s3.amazonaws.com/synthetic/gc5/201512012345.v18571154_e38040320.tsv","919a22f1456d9fd978ba8d12ea96579c"), # 1
     ("https://graphchallenge.s3.amazonaws.com/synthetic/gc5/201512020330.v226196185_e480047894.tsv", "3b7f0546835d1f10cc41312f7a12b8d1"), # 5
