@@ -38,7 +38,7 @@ endfunction()
 find_package(OpenMP)
 
 if (OpenMP_CXX_FOUND)
-    set(CMAKE_CUDA_FLAGS ${CMAKE_CUDA_FLAGS} -Xcompiler=${OpenMP_CXX_FLAGS})
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler=${OpenMP_CXX_FLAGS}")
 endif()
 
 add_exe(NAME gc SRCS main.cu)
