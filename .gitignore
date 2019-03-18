@@ -36,3 +36,4 @@ build
 tools/*.tsv
 tools/*.tsv.gz
 tools/*.bel
+tools/*.csv
