@@ -26,9 +26,10 @@ fig, ax = plt.subplots()
 im = ax.imshow(arr)
 
 ax.xaxis.tick_top()
-ax.set_xlabel('j', fontsize=FONTSIZE)
-ax.set_ylabel('i', fontsize=FONTSIZE)
-ax.set_title('E(i,j) Neighbor List Length', fontsize=FONTSIZE, pad=30)
+locs, labels = ax.get_xticks(), ax.get_xticklabels()
+ax.set_xlabel('log2 |N(j)|', fontsize=FONTSIZE)
+ax.set_ylabel('log2 |N(i)|', fontsize=FONTSIZE)
+ax.set_title('E(i,j) Counts by Neighbor List Length', fontsize=FONTSIZE, pad=30)
 
 
 cbar = plt.colorbar(im)
