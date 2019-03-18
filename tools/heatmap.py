@@ -32,7 +32,7 @@ ax.set_title('E(i,j) Neighbor List Length', fontsize=FONTSIZE, pad=30)
 
 
 cbar = plt.colorbar(im)
-cbar.ax.set_ylabel("log10 Edge Count", fontsize=FONTSIZE)
+cbar.ax.set_ylabel("log2 Edge Count", fontsize=FONTSIZE)
 
 
 fig.tight_layout()
