@@ -10,24 +10,32 @@
 #include "pangolin/pangolin.cuh"
 #include "pangolin/pangolin.hpp"
 
+constexpr size_t SCALE_B = 1;
 constexpr size_t SCALE_K = 1024;
 constexpr size_t SCALE_M = 1024 * 1024;
-constexpr const char *UNIT_K = "KB";
-constexpr const char *UNIT_M = "MB";
+constexpr size_t SCALE_G = 1024ull * 1024ull * 1024ull;
+const char *UNIT_B = "B";
+const char *UNIT_K = "KB";
+const char *UNIT_M = "MB";
+const char *UNIT_G = "GB";
 
 int main(int argc, char **argv) {
   std::string path;
   bool help = false;
   bool debug = false;
   bool verbose = false;
+  size_t dataSize = 8;
+  std::string unitStr = "M";
 
   clara::Parser cli;
   cli = cli | clara::Help(help);
   cli = cli | clara::Opt(debug)["--debug"]("print debug messages to stderr");
   cli = cli |
         clara::Opt(verbose)["--verbose"]("print verbose messages to stderr");
-  cli = cli = cli | clara::Opt(verbose)["--verbose"](
-                        "print verbose messages to stderr");
+  cli = cli | clara::Opt(dataSize,
+                         "BYTES")["-d"]("size of each data load in bytes (8)");
+  cli = cli |
+        clara::Opt(unitStr, "BKMG")["-u"]("the unit to present results in (M)");
   cli =
       cli | clara::Arg(path, "graph file")("Path to adjacency list").required();
 
@@ -73,7 +81,22 @@ int main(int argc, char **argv) {
 
   const char *unit = UNIT_M;
   size_t scale = SCALE_M;
-  const size_t dataSize = 8;
+  if (unitStr == "B") {
+    unit = UNIT_B;
+    scale = SCALE_B;
+  } else if ("K" == unitStr) {
+    unit = UNIT_K;
+    scale = SCALE_K;
+  } else if ("M" == unitStr) {
+    unit = UNIT_M;
+    scale = SCALE_M;
+  } else if ("G" == unitStr) {
+    unit = UNIT_G;
+    scale = SCALE_G;
+  } else {
+    std::cout << cli;
+    return -1;
+  }
 
   // read data
   auto start = std::chrono::system_clock::now();
@@ -114,14 +137,14 @@ int main(int argc, char **argv) {
   for (size_t i = 0; i < csr.nnz(); ++i) {
     uint64_t src = csr.row_ind()[i];
     uint64_t dst = csr.col_ind()[i];
-    rowIndBytes += 8;
-    colIndBytes += 8;
+    rowIndBytes += dataSize;
+    colIndBytes += dataSize;
 
     size_t srcLen = csr.row_ptr()[src + 1] - csr.row_ptr()[src];
     size_t dstLen = csr.row_ptr()[dst + 1] - csr.row_ptr()[dst];
-    rowPtrBytes += 32;
+    rowPtrBytes += 4 * dataSize;
 
-    rowIndBytes += srcLen * 8 + dstLen * 8;
+    colIndBytes += (srcLen + dstLen) * dataSize;
   }
 
   elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
