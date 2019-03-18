@@ -14,11 +14,19 @@ int main(int argc, char **argv) {
   bool debug = false;
   bool verbose = false;
 
+  bool printEdges = false;
+  bool printBins = true;
+
   clara::Parser cli;
   cli = cli | clara::Help(help);
   cli = cli | clara::Opt(debug)["--debug"]("print debug messages to stderr");
   cli = cli |
         clara::Opt(verbose)["--verbose"]("print verbose messages to stderr");
+  cli = cli | clara::Opt(printEdges)["--edges"](
+                  "print neighbor list lengths for edges");
+  cli = cli | clara::Opt(printBins)["--bins"]("print bin values");
+  cli = cli = cli | clara::Opt(verbose)["--verbose"](
+                        "print verbose messages to stderr");
   cli =
       cli | clara::Arg(path, "graph file")("Path to adjacency list").required();
 
@@ -60,6 +68,10 @@ int main(int argc, char **argv) {
 #ifndef NDEBUG
   LOG(warn, "Not a release build");
 #endif
+
+  if (printEdges) {
+    printBins = false;
+  }
 
   // read data
   auto start = std::chrono::system_clock::now();
@@ -104,8 +116,8 @@ int main(int argc, char **argv) {
     uint64_t src = csr.row_ind()[i];
     uint64_t dst = csr.col_ind()[i];
 
-    double srcLen = csr.row_ptr()[src + 1] - csr.row_ptr()[src];
-    double dstLen = csr.row_ptr()[dst + 1] - csr.row_ptr()[dst];
+    size_t srcLen = csr.row_ptr()[src + 1] - csr.row_ptr()[src];
+    size_t dstLen = csr.row_ptr()[dst + 1] - csr.row_ptr()[dst];
 
     size_t srcBin = 0;
     if (srcLen != 0) {
@@ -116,40 +128,51 @@ int main(int argc, char **argv) {
       dstBin = std::ceil(std::log2(dstLen)) + 1;
     }
 
+    /*
     std::cout << fmt::format("{}->{}, {}->{}", srcLen, srcBin, dstLen, dstBin)
               << std::endl;
+              */
+    if (printEdges) {
+      std::string s = fmt::format("{},{}", srcLen, dstLen);
+#pragma omp critical
+      { std::cout << s << std::endl; }
+    }
 
+    if (printBins) {
 #pragma omp atomic
-    bins[srcBin][dstBin]++;
+      bins[srcBin][dstBin]++;
+    }
   }
 
   elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
   nvtxRangePop();
   LOG(info, "histogram time {}s", elapsed);
 
-  // find the maximum bin
-  size_t iMax = 0;
-  for (size_t i = 0; i < bins.size(); ++i) {
-    for (size_t j = 0; j < bins[i].size(); ++j) {
-      if (bins[i][j] > 0) {
-        iMax = i > iMax ? i : iMax;
-        iMax = j > iMax ? j : iMax;
+  if (printBins) {
+    // find the maximum bin
+    size_t iMax = 0;
+    for (size_t i = 0; i < bins.size(); ++i) {
+      for (size_t j = 0; j < bins[i].size(); ++j) {
+        if (bins[i][j] > 0) {
+          iMax = i > iMax ? i : iMax;
+          iMax = j > iMax ? j : iMax;
+        }
       }
     }
-  }
-  iMax++;
+    iMax++;
 
-  for (size_t i = 0; i < iMax; ++i) {
-    std::cout << ",\t" << i;
-  }
-  std::cout << std::endl;
-  for (size_t i = 0; i < iMax; ++i) {
-    const auto &row = bins[i];
-    std::cout << i << "\t";
-    for (size_t j = 0; j < iMax; ++j) {
-      std::cout << row[j] << ",\t";
+    for (size_t i = 0; i < iMax; ++i) {
+      std::cout << ",\t" << (1 << i) / 2;
     }
     std::cout << std::endl;
+    for (size_t i = 0; i < iMax; ++i) {
+      const auto &row = bins[i];
+      std::cout << (1 << i) / 2;
+      for (size_t j = 0; j < iMax; ++j) {
+        std::cout << ",\t" << row[j];
+      }
+      std::cout << std::endl;
+    }
   }
 
   return 0;

@@ -28,7 +28,18 @@ function(add_exe)
     )
     target_link_libraries(${PARSED_ARGS_NAME} PUBLIC pangolin::pangolin)
     target_link_libraries(${PARSED_ARGS_NAME} PUBLIC nvToolsExt)
+
+    if(OpenMP_CXX_FOUND)
+      target_link_libraries(${PARSED_ARGS_NAME} PUBLIC ${OpenMP_CXX_LIBRARIES})
+    endif()
 endfunction()
+
+
+find_package(OpenMP)
+
+if (OpenMP_CXX_FOUND)
+    set(CMAKE_CUDA_FLAGS ${CMAKE_CUDA_FLAGS} -Xcompiler=${OpenMP_CXX_FLAGS})
+endif()
 
 add_exe(NAME gc SRCS main.cu)
 add_exe(NAME benchmark-linear SRCS benchmark_linear.cu)
