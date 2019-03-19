@@ -9,7 +9,7 @@ function(add_exe)
     )
     add_executable(${PARSED_ARGS_NAME} ${PARSED_ARGS_SRCS})
     # set_target_properties(${PARSED_ARGS_NAME} PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-    target_include_directories(${PARSED_ARGS_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/thirdparty SYSTEM)
+    target_include_directories(${PARSED_ARGS_NAME} SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/thirdparty)
     target_compile_options(${PARSED_ARGS_NAME}
     PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:
     -Xcompiler=-Wall;
@@ -23,8 +23,7 @@ function(add_exe)
     -Xcompiler=-Wfloat-equal;
     -Xcompiler=-Wundef;
     -Xcompiler=-Wvla;
-    -Xcompiler=-Wshadow;
-    -lineinfo>
+    -Xcompiler=-Wshadow>
     )
     target_link_libraries(${PARSED_ARGS_NAME} PUBLIC pangolin::pangolin)
     target_link_libraries(${PARSED_ARGS_NAME} PUBLIC nvToolsExt)
