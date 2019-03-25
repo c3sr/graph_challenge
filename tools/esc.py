@@ -28,6 +28,10 @@ A = [
 B = A
 
 
+def launch(func):
+    return func
+
+# @launch
 def esc(A,B, rows=set([0,1,2,3,4])):
     C = 0
     # expansion
@@ -36,19 +40,19 @@ def esc(A,B, rows=set([0,1,2,3,4])):
         for k in A[i]:
             for j in B[k]:
                 C_hat += [(i, j)]
-    print(len(C_hat), C_hat)
+    print("C_hat (after expand):", len(C_hat), C_hat)
 
 
     # sort
     C_hat = sorted(C_hat)
-    print(C_hat)
+    print("C_hat after sort:", C_hat)
 
     # contract
     for i in rows: # range(C.num_rows)
         v = 0
         # extract partial products for row i
         J = [t[1] for t in C_hat if t[0] == i]
-        print(i, J, A[i])
+        # print(i, J, A[i])
         for j in J: # if i,j is non-zero in A
             if j in A[i]:
                 C += 1
@@ -63,6 +67,7 @@ def local_esc(A,B):
     sharedSz = 4
     sharedC_hat = [[]  for i in range(5)]
     sharedC = [0 for i in range(5)]
+    sharedA = [[] for i in range(5)]
 
     ## rows that won't fit in local memory
     globalRows = set()
@@ -79,14 +84,23 @@ def local_esc(A,B):
                 numPartialProducts += 1
         if numPartialProducts > sharedSz:
             globalRows.add(i)
-    print(globalRows)
+    print("global rows:", globalRows)
+
+    # load A into shared memory
+    for i in range(5):
+        if i not in globalRows:
+            sharedA[i] = A[i]
+    print("local As:")
+    for i,s in enumerate(sharedA):
+        print(s)
 
     # expansion
     # place of expanding into C_hat is from the prefix scan
     C_hat = []
     for i in range(5): # range(C.num_rows)
         if i not in globalRows:
-            for k in A[i]:
+            # print("A[{}] {}".format(i, A[i]))
+            for k in sharedA[i]:
                 for j in B[k]:
                     sharedC_hat[i] += [(i, j)]
     print("local memory: (after expand)")
@@ -105,10 +119,10 @@ def local_esc(A,B):
     # contract
     for i in range(5): # range(C.num_rows)
         # extract partial products for row i
-        J = sharedC_hat[i]
-        print(i, J, A[i])
+        J = (t[1] for t in sharedC_hat[i])
+        # print(i, J, A[i])
         for j in J: # if i,j is non-zero in A
-            if j in A[i]: # FIXME: this should only go over our piece of A
+            if j in sharedA[i]:
                 sharedC[i] += 1
     print("local memory: (after contract)")
     for i,s in enumerate(sharedC):
