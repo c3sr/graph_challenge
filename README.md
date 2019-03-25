@@ -1,27 +1,44 @@
 # graph_challenge
 
+## Getting Started
+
+```
+git clone git@github.com:c3sr/graph_challenge.git --recursive
+cd graph_challenge
+mkdir build
+cd build
+cmake ..
+make
+```
+
+If you are planning to develop in Pangolin, you should check out a new branch of pangolin to use
+
+```
+cd thirdparty/pangolin
+git checkout -b my-branch
+```
+
 ## Datasets
 
-Graphs may be downloaded from https://graphchallenge.mit.edu/data-sets.
-Alternatively, `python tools/get_data.py` may be used to download some datasets.
+Graphs may be downloaded using [cwpearson/graph-datasets](https://github.com/cwpearson/graph-datasets).
 
 ```
 mkdir ~/graphs
-python tools/get_data.py --out ~/graphs
+python graph-datasets/tools/download.py --out ~/graphs
 ```
 
-Datasets may be converted to a binary edge list format using `python tools/tsv-to-bel.py`.
+There are many graphs. You can restrict the graphs that are downloaded.
 
-To produce graph.bel, try one of the following:
+To speed up I/O, it is recommended to convert the graphs to a binary format
+
 ```
-python tools/tsv-to-bel.py graph.tsv
-python tools/tsv-to-bel.py graph.tsv graph.bel
+python graph-datasets/tools/convert.py ~/graphs/graphtsv -t bel
 ```
 
 
 ## Citing
 
-Our 2017 submission may be cited with the following bibtex entry
+Our 2018 submission may be cited with the following bibtex entry
 
     @inproceedings{mailthody2018collaborative,
     title={Collaborative (CPU+ GPU) Algorithms for Triangle Counting and Truss Decomposition},
