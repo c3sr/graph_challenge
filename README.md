@@ -11,6 +11,15 @@ cmake ..
 make
 ```
 
+If you are building on a Power9 system using your own install of clang5, do something like
+
+```
+# so CMake can configure OpenMP correctly
+export LD_LIBRARY_PATH=~/software/llvm-5.0.0/lib
+# toolchain file tells nvcc to use clang
+cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=`readlink -f ../thirdparty/pangolin/cmake/clang.toolchain`
+```
+
 If you are planning to develop in Pangolin, you should check out a new branch of pangolin to use
 
 ```
