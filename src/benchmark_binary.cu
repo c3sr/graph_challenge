@@ -1,6 +1,8 @@
 #include <fmt/format.h>
 #include <iostream>
 
+#include <nvToolsExt.h>
+
 #include "clara/clara.hpp"
 #include "pangolin/pangolin.cuh"
 #include "pangolin/pangolin.hpp"
@@ -114,15 +116,17 @@ int main(int argc, char **argv) {
     LOG(info, "create CSR time {}s", elapsed);
 
     // read-mostly
+    nvtxRangePush("read-mostly");
     start = std::chrono::system_clock::now();
     if (readMostly) {
+      csr.read_mostly();
       for (const auto &gpu : gpus) {
-        csr.read_mostly(gpu);
         CUDA_RUNTIME(cudaSetDevice(gpu));
         CUDA_RUNTIME(cudaDeviceSynchronize());
       }
     }
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
+    nvtxRangePop();
     LOG(info, "read-mostly CSR time {}s", elapsed);
 
     // accessed-by

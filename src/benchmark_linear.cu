@@ -115,8 +115,8 @@ int main(int argc, char **argv) {
     nvtxRangePush("read-mostly");
     start = std::chrono::system_clock::now();
     if (readMostly) {
+      csr.read_mostly();
       for (const auto &gpu : gpus) {
-        csr.read_mostly(gpu);
         CUDA_RUNTIME(cudaSetDevice(gpu));
         CUDA_RUNTIME(cudaDeviceSynchronize());
       }

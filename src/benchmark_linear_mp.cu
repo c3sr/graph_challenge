@@ -3,6 +3,8 @@
 
 #include <nvToolsExt.h>
 #include <omp.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include "clara/clara.hpp"
 #include "pangolin/pangolin.cuh"
@@ -83,7 +85,35 @@ int main(int argc, char **argv) {
     gpus.push_back(0);
   }
 
+  // Check for unified memory support
+  bool managed = true;
+  cudaDeviceProp prop;
+  for (auto gpu : gpus) {
+    CUDA_RUNTIME(cudaGetDeviceProperties(&prop, gpu));
+    // We check for concurrentManagedAccess, as devices with only the
+    // managedAccess property have extra synchronization requirements.
+    if (!prop.concurrentManagedAccess) {
+      LOG(warn, "device {} does not support concurrentManagedAccess", gpu);
+    }
+    managed = managed && prop.concurrentManagedAccess;
+  }
+
+  if (managed) {
+    SPDLOG_DEBUG(pangolin::logger::console, "managed memory supported");
+  } else {
+    LOG(warn, "managed memory not supported!");
+  }
+
+  // set up GPUs
+  nvtxRangePush("setup");
+  for (auto gpu : gpus) {
+    CUDA_RUNTIME(cudaSetDevice(gpu));
+    CUDA_RUNTIME(cudaFree(0));
+  }
+  nvtxRangePop();
+
   // read data
+  nvtxRangePush("read data");
   auto start = std::chrono::system_clock::now();
   pangolin::EdgeListFile file(path);
 
@@ -94,15 +124,17 @@ int main(int argc, char **argv) {
   }
   double elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
   LOG(info, "read_data time {}s", elapsed);
+  nvtxRangePop();
   LOG(debug, "read {} edges", edges.size());
 
   // create one stream per GPU
+  nvtxRangePush("create streams");
   std::vector<cudaStream_t> streams(gpus.size());
   for (size_t i = 0; i < gpus.size(); ++i) {
+    CUDA_RUNTIME(cudaSetDevice(gpus[i]));
     CUDA_RUNTIME(cudaStreamCreate(&streams[i]));
   }
-
-  omp_set_num_threads(gpus.size());
+  nvtxRangePop();
 
   // create csr and count `iters` times
   std::vector<double> times;
@@ -111,53 +143,60 @@ int main(int argc, char **argv) {
   for (int i = 0; i < iters; ++i) {
 
     // create csr
+    CUDA_RUNTIME(cudaSetDevice(gpus[0]));
+    nvtxRangePush("create CSR");
     start = std::chrono::system_clock::now();
     auto upperTriangular = [](pangolin::EdgeTy<uint64_t> e) {
       return e.first < e.second;
     };
     auto csr = pangolin::COO<uint64_t>::from_edges(edges.begin(), edges.end(),
                                                    upperTriangular);
+    nvtxRangePop();
     LOG(debug, "nnz = {}", csr.nnz());
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
     LOG(info, "create CSR time {}s", elapsed);
 
+    // read-mostly
+    nvtxRangePush("read-mostly");
+    start = std::chrono::system_clock::now();
+    if (readMostly) {
+      csr.read_mostly();
+    }
+    elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
+    nvtxRangePop();
+    LOG(info, "read-mostly CSR time {}s", elapsed);
+
+    // accessed-by
+    nvtxRangePush("accessed-by");
+    start = std::chrono::system_clock::now();
+    if (accessedBy) {
+      for (const auto &gpu : gpus) {
+        csr.accessed_by(gpu);
+      }
+    }
+    elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
+    nvtxRangePop();
+    LOG(info, "accessed-by CSR time {}s", elapsed);
+
     uint64_t total = 0; // total triangle count
 
+    omp_set_num_threads(gpus.size());
 #pragma omp parallel for
     for (size_t gpuIdx = 0; gpuIdx < gpus.size(); ++gpuIdx) {
       const int gpu = gpus[gpuIdx];
+      cudaStream_t stream = streams[gpuIdx];
       CUDA_RUNTIME(cudaSetDevice(gpu));
-      // nvtxNameOsThread(std::to_string(gpuIdx).c_str());
-      // read-mostly
-      if (readMostly) {
-        nvtxRangePush("read-mostly");
-        csr.read_mostly(gpu);
-        nvtxRangePop();
-      }
-      // start = std::chrono::system_clock::now();
-      // elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
-      // LOG(info, "read-mostly CSR time {}s", elapsed);
-
-      // accessed-by
-      if (accessedBy) {
-        nvtxRangePush("accessed-by");
-        csr.accessed_by(gpu);
-        nvtxRangePop();
-      }
-      // start = std::chrono::system_clock::now();
-      // elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
-      // LOG(info, "accessed-by CSR time {}s", elapsed);
 
       // prefetch
       if (prefetchAsync) {
+        LOG(debug, "{}: prefetch csr to device {}", omp_get_thread_num(), gpu);
         nvtxRangePush("prefetch");
-        csr.prefetch_async(gpu);
-        // CUDA_RUNTIME(cudaStreamSynchronize(0));
+        csr.prefetch_async(gpu, stream);
         nvtxRangePop();
       }
-      // start = std::chrono::system_clock::now();
-      // elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
-      // LOG(info, "prefetch CSR time {}s", elapsed);
+      start = std::chrono::system_clock::now();
+      elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
+      LOG(info, "prefetch CSR time {}s", elapsed);
 
       // count triangles
       nvtxRangePush("count");
@@ -165,7 +204,7 @@ int main(int argc, char **argv) {
 
       // create async counters
       LOG(debug, "{}: create device {} counter", omp_get_thread_num(), gpu);
-      pangolin::LinearTC counter(gpu);
+      pangolin::LinearTC counter(gpu, stream);
 
       // determine the number of edges per gpu
       const size_t edgesPerGPU = (csr.nnz() + gpus.size() - 1) / gpus.size();
@@ -198,6 +237,10 @@ int main(int argc, char **argv) {
     nnz = csr.nnz();
 
   } // iters
+
+  for (auto stream : streams) {
+    CUDA_RUNTIME(cudaStreamDestroy(stream));
+  }
 
   std::cout << path << ",\t" << nnz << ",\t" << tris;
   for (const auto &t : times) {
