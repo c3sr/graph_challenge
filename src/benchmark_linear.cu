@@ -13,7 +13,7 @@
 
     Not safe for simultaneous calls to
 */
-template <typename T, size_t N = 256> struct LockQueue {
+template <typename T, size_t N = 128> struct LockQueue {
 
   typedef T value_type;
 
@@ -61,7 +61,9 @@ private:
 };
 
 template <typename EDGE>
-void produce(const std::string path, LockQueue<std::vector<EDGE>> &queue) {
+void produce(const std::string path, LockQueue<std::vector<EDGE>> &queue,
+             volatile bool *busy) {
+  *busy = true;
   pangolin::EdgeListFile file(path);
 
   std::vector<EDGE> fileEdges;
@@ -69,10 +71,11 @@ void produce(const std::string path, LockQueue<std::vector<EDGE>> &queue) {
 
     // wait for queue to not be full
     while (queue.full()) {
-      // busy-wait
+      // std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     queue.push(fileEdges);
   }
+  *busy = false;
 }
 
 template <typename Mat, typename EDGE>
@@ -111,6 +114,7 @@ void consume(
       }
     }
   }
+  mat.finish_edges();
 }
 
 int main(int argc, char **argv) {
@@ -196,12 +200,17 @@ int main(int argc, char **argv) {
     CUDA_RUNTIME(cudaGetDeviceProperties(&prop, gpu));
     // We check for concurrentManagedAccess, as devices with only the
     // managedAccess property have extra synchronization requirements.
-    if (!prop.concurrentManagedAccess) {
-      LOG(warn, "device {} prop.concurrentManagedAccess=0", gpu);
-    } else {
+    if (prop.concurrentManagedAccess) {
       LOG(debug, "device {} prop.concurrentManagedAccess=1", gpu);
+    } else {
+      LOG(warn, "device {} prop.concurrentManagedAccess=0", gpu);
     }
     managed = managed && prop.concurrentManagedAccess;
+    if (prop.canMapHostMemory) {
+      LOG(debug, "device {} prop.canMapHostMemory=1", gpu);
+    } else {
+      LOG(warn, "device {} prop.canMapHostMemory=0", gpu);
+    }
   }
 
   if (!managed) {
@@ -218,11 +227,11 @@ int main(int argc, char **argv) {
     CUDA_RUNTIME(cudaSetDevice(gpu));
     unsigned int flags = 0;
     CUDA_RUNTIME(cudaGetDeviceFlags(&flags));
-    if (flags || cudaDeviceMapHost) {
+    if (flags & cudaDeviceMapHost) {
       LOG(debug, "device {} cudaDeviceMapHost=1", gpu);
     } else {
-      LOG(error, "device {} cudaDeviceMapHost=0", gpu);
-      exit(-1);
+      LOG(warn, "device {} cudaDeviceMapHost=0", gpu);
+      // exit(-1);
     }
   }
 
@@ -231,19 +240,20 @@ int main(int argc, char **argv) {
 
   LockQueue<std::vector<Edge64>> queue;
   pangolin::COO<Index64> csr;
-  volatile bool filling = true;
+  volatile bool readerActive = true;
   // start a thread to read the matrix data
   LOG(debug, "start disk reader");
-  std::thread reader(produce<Edge64>, path, std::ref(queue));
+  std::thread reader(produce<Edge64>, path, std::ref(queue), &readerActive);
 
   // start a thread to build the matrix
-  LOG(debug, "start csr builder");
+  LOG(debug, "start csr build");
   std::thread builder(consume<pangolin::COO<Index64>, Edge64>, std::ref(queue),
-                      std::ref(csr), &filling);
+                      std::ref(csr), &readerActive);
+  // consume(queue, csr, &readerActive);
 
   LOG(debug, "waiting for disk reader...");
   reader.join();
-  filling = false;
+  readerActive = false;
   LOG(debug, "waiting for CSR builder...");
   builder.join();
   assert(queue.empty());
