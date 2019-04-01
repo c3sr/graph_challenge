@@ -1,5 +1,7 @@
 #include <fmt/format.h>
 #include <iostream>
+#include <mutex>
+#include <thread>
 
 #include <nvToolsExt.h>
 
@@ -10,54 +12,110 @@
 template <size_t N, typename T> struct CircularBuffer {
   volatile size_t head_;
   volatile size_t tail_;
-  volatile bool full_;
-  T[N] buffer_;
+  volatile size_t count_;
+  std::mutex mtx_;
+  T buffer_[N];
 
-  CircularBuffer() : head_(0), tail_(0), full_(false) {}
+  CircularBuffer() : head_(0), tail_(0), count_(0) {}
 
-  void push_back(const T &val) {
-    while (true) {
-      if (!full()) {
-        buffer_[head_] = val;
-        advance_head();
-        full_ = (tail_ == head_);
-        return;
-      }
-    }
+  void push(const T &val) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    assert(count_ < N);
+    buffer_[head_] = val;
+    advance_head();
+    return;
   }
 
   T pop() {
-    while (true)
-      assert(!empty());
-    if (!empty()) {
-      T val = buffer_[tail_];
-      advance_tail();
-      full_ = (tail_ == head_);
-      return val;
-    }
+    std::lock_guard<std::mutex> lock(mtx_);
+    assert(count_ > 0);
+    T val = buffer_[tail_];
+    advance_tail();
+    return val;
   }
 
-  advance_head() { head_ = (head_ + 1) % N; }
+  void advance_head() {
+    size_t nextHead = (head_ + 1) % N;
+    head_ = nextHead;
+    count_++;
+    SPDLOG_TRACE(pangolin::logger::console, "head -> {}, count={}", head_,
+                 count_);
+  }
+  void advance_tail() {
+    size_t nextTail = (tail_ + 1) % N;
+    tail_ = nextTail;
+    count_--;
+    SPDLOG_TRACE(pangolin::logger::console, "tail -> {}, count={}", tail_,
+                 count_);
+  }
 
-  advance_tail() { tail_ = (tail_ + 1) % N; }
+  bool empty() { return count_ == 0; }
+  bool full() { return count_ == N; }
 
-  bool empty() const { return (!full_) && (head_ == tail_); }
-  bool full() const { return full_; }
-}
+private:
+  // bool unsafe_empty() const { return (!full_) && (head_ == tail_); }
+  // bool unsafe_full() const { return full_; }
+  // bool unsafe_size() { return (head_ - tail_) % N; }
+};
 
-void produce(const std::string &path) {
+template <typename EDGE>
+void produce(const std::string path,
+             CircularBuffer<128, std::vector<EDGE>> &queue) {
   pangolin::EdgeListFile file(path);
 
-  std::vector<pangolin::EdgeTy<uint64_t>> edges;
-  std::vector<pangolin::EdgeTy<uint64_t>> fileEdges;
-  while (file.get_edges(fileEdges, 10)) {
-    edges.insert(edges.end(), fileEdges.begin(), fileEdges.end());
+  std::vector<EDGE> fileEdges;
+  while (file.get_edges(fileEdges, 50)) {
+
+    // wait for queue to not be full
+    while (queue.full()) {
+      // busy-wait
+    }
+    queue.push(fileEdges);
   }
 }
 
-void consume() {}
+template <typename Mat, typename EDGE>
+void consume(
+    CircularBuffer<128, std::vector<EDGE>> &queue, Mat &mat,
+    const volatile bool *filling //!< [in] is the queue still being filled?
+) {
+
+  auto upperTriangular = [](pangolin::EdgeTy<uint64_t> e) {
+    return e.first < e.second;
+  };
+
+  // keep grabbing while queue is filling
+  LOG(debug, "reading queue while filling");
+  while (*filling) {
+    if (!queue.empty()) {
+      std::vector<EDGE> vals = queue.pop();
+      for (auto &val : vals) {
+        if (upperTriangular(val)) {
+          SPDLOG_TRACE(pangolin::logger::console, "{} {}", val.first,
+                       val.second);
+          mat.add_next_edge(val);
+        }
+      }
+    }
+  }
+  // drain queue
+  LOG(debug, "draining queue after filling stops");
+  while (!queue.empty()) {
+    std::vector<EDGE> vals = queue.pop();
+    for (auto &val : vals) {
+      if (upperTriangular(val)) {
+        SPDLOG_TRACE(pangolin::logger::console, "drain {} {}", val.first,
+                     val.second);
+        mat.add_next_edge(val);
+      }
+    }
+  }
+}
 
 int main(int argc, char **argv) {
+
+  typedef uint64_t Index64;
+  typedef pangolin::EdgeTy<Index64> Edge64;
 
   pangolin::Config config;
 
@@ -132,35 +190,37 @@ int main(int argc, char **argv) {
     gpus.push_back(0);
   }
 
-  // read data
+  // read data / build
   auto start = std::chrono::system_clock::now();
-  pangolin::EdgeListFile file(path);
 
-  std::vector<pangolin::EdgeTy<uint64_t>> edges;
-  std::vector<pangolin::EdgeTy<uint64_t>> fileEdges;
-  while (file.get_edges(fileEdges, 10)) {
-    edges.insert(edges.end(), fileEdges.begin(), fileEdges.end());
-  }
+  CircularBuffer<128, std::vector<Edge64>> queue;
+  pangolin::COO<Index64> csr;
+  volatile bool filling = true;
+  // start a thread to read the matrix data
+  LOG(debug, "start disk reader");
+  std::thread reader(produce<Edge64>, path, std::ref(queue));
+
+  // start a thread to build the matrix
+  LOG(debug, "start csr builder");
+  std::thread builder(consume<pangolin::COO<Index64>, Edge64>, std::ref(queue),
+                      std::ref(csr), &filling);
+
+  LOG(debug, "waiting for disk reader...");
+  reader.join();
+  filling = false;
+  LOG(debug, "waiting for CSR builder...");
+  builder.join();
+  assert(queue.empty());
+
   double elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
-  LOG(info, "read_data time {}s", elapsed);
-  LOG(debug, "read {} edges", edges.size());
+  LOG(info, "read_data/build time {}s", elapsed);
 
   // create csr and count `iters` times
   std::vector<double> times;
   uint64_t nnz;
   uint64_t tris;
-  for (int i = 0; i < iters; ++i) {
-    // create csr
-    start = std::chrono::system_clock::now();
-    auto upperTriangular = [](pangolin::EdgeTy<uint64_t> e) {
-      return e.first < e.second;
-    };
-    auto csr = pangolin::COO<uint64_t>::from_edges(edges.begin(), edges.end(),
-                                                   upperTriangular);
-    LOG(debug, "nnz = {}", csr.nnz());
-    elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
-    LOG(info, "create CSR time {}s", elapsed);
 
+  for (int i = 0; i < iters; ++i) {
     // read-mostly
     nvtxRangePush("read-mostly");
     start = std::chrono::system_clock::now();
