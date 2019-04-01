@@ -7,6 +7,56 @@
 #include "pangolin/pangolin.cuh"
 #include "pangolin/pangolin.hpp"
 
+template <size_t N, typename T> struct CircularBuffer {
+  volatile size_t head_;
+  volatile size_t tail_;
+  volatile bool full_;
+  T[N] buffer_;
+
+  CircularBuffer() : head_(0), tail_(0), full_(false) {}
+
+  void push_back(const T &val) {
+    while (true) {
+      if (!full()) {
+        buffer_[head_] = val;
+        advance_head();
+        full_ = (tail_ == head_);
+        return;
+      }
+    }
+  }
+
+  T pop() {
+    while (true)
+      assert(!empty());
+    if (!empty()) {
+      T val = buffer_[tail_];
+      advance_tail();
+      full_ = (tail_ == head_);
+      return val;
+    }
+  }
+
+  advance_head() { head_ = (head_ + 1) % N; }
+
+  advance_tail() { tail_ = (tail_ + 1) % N; }
+
+  bool empty() const { return (!full_) && (head_ == tail_); }
+  bool full() const { return full_; }
+}
+
+void produce(const std::string &path) {
+  pangolin::EdgeListFile file(path);
+
+  std::vector<pangolin::EdgeTy<uint64_t>> edges;
+  std::vector<pangolin::EdgeTy<uint64_t>> fileEdges;
+  while (file.get_edges(fileEdges, 10)) {
+    edges.insert(edges.end(), fileEdges.begin(), fileEdges.end());
+  }
+}
+
+void consume() {}
+
 int main(int argc, char **argv) {
 
   pangolin::Config config;
