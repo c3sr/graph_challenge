@@ -9,14 +9,21 @@
 #include "pangolin/pangolin.cuh"
 #include "pangolin/pangolin.hpp"
 
-template <size_t N, typename T> struct CircularBuffer {
+/*! A single-producer, single-consumer queue
+
+    Not safe for simultaneous calls to
+*/
+template <typename T, size_t N = 256> struct LockQueue {
+
+  typedef T value_type;
+
   volatile size_t head_;
   volatile size_t tail_;
   volatile size_t count_;
   std::mutex mtx_;
   T buffer_[N];
 
-  CircularBuffer() : head_(0), tail_(0), count_(0) {}
+  LockQueue() : head_(0), tail_(0), count_(0) {}
 
   void push(const T &val) {
     std::lock_guard<std::mutex> lock(mtx_);
@@ -34,33 +41,27 @@ template <size_t N, typename T> struct CircularBuffer {
     return val;
   }
 
+  bool empty() { return count_ == 0; }
+  bool full() { return count_ >= N; }
+  size_t count() { return count_; }
+
+private:
   void advance_head() {
-    size_t nextHead = (head_ + 1) % N;
-    head_ = nextHead;
+    head_ = (head_ + 1) % N;
     count_++;
     SPDLOG_TRACE(pangolin::logger::console, "head -> {}, count={}", head_,
                  count_);
   }
   void advance_tail() {
-    size_t nextTail = (tail_ + 1) % N;
-    tail_ = nextTail;
+    tail_ = (tail_ + 1) % N;
     count_--;
     SPDLOG_TRACE(pangolin::logger::console, "tail -> {}, count={}", tail_,
                  count_);
   }
-
-  bool empty() { return count_ == 0; }
-  bool full() { return count_ == N; }
-
-private:
-  // bool unsafe_empty() const { return (!full_) && (head_ == tail_); }
-  // bool unsafe_full() const { return full_; }
-  // bool unsafe_size() { return (head_ - tail_) % N; }
 };
 
 template <typename EDGE>
-void produce(const std::string path,
-             CircularBuffer<128, std::vector<EDGE>> &queue) {
+void produce(const std::string path, LockQueue<std::vector<EDGE>> &queue) {
   pangolin::EdgeListFile file(path);
 
   std::vector<EDGE> fileEdges;
@@ -76,7 +77,7 @@ void produce(const std::string path,
 
 template <typename Mat, typename EDGE>
 void consume(
-    CircularBuffer<128, std::vector<EDGE>> &queue, Mat &mat,
+    LockQueue<std::vector<EDGE>> &queue, Mat &mat,
     const volatile bool *filling //!< [in] is the queue still being filled?
 ) {
 
@@ -116,8 +117,6 @@ int main(int argc, char **argv) {
 
   typedef uint64_t Index64;
   typedef pangolin::EdgeTy<Index64> Edge64;
-
-  pangolin::Config config;
 
   std::vector<int> gpus;
   std::string path;
@@ -190,10 +189,47 @@ int main(int argc, char **argv) {
     gpus.push_back(0);
   }
 
+  // Check for unified memory support
+  bool managed = true;
+  for (auto gpu : gpus) {
+    cudaDeviceProp prop;
+    CUDA_RUNTIME(cudaGetDeviceProperties(&prop, gpu));
+    // We check for concurrentManagedAccess, as devices with only the
+    // managedAccess property have extra synchronization requirements.
+    if (!prop.concurrentManagedAccess) {
+      LOG(warn, "device {} prop.concurrentManagedAccess=0", gpu);
+    } else {
+      LOG(debug, "device {} prop.concurrentManagedAccess=1", gpu);
+    }
+    managed = managed && prop.concurrentManagedAccess;
+  }
+
+  if (!managed) {
+    prefetchAsync = false;
+    LOG(warn, "disabling prefetch");
+    readMostly = false;
+    LOG(warn, "disabling readMostly");
+    accessedBy = false;
+    LOG(warn, "disabling accessedBy");
+  }
+
+  // Check for mapping host memory memory support
+  for (auto gpu : gpus) {
+    CUDA_RUNTIME(cudaSetDevice(gpu));
+    unsigned int flags = 0;
+    CUDA_RUNTIME(cudaGetDeviceFlags(&flags));
+    if (flags || cudaDeviceMapHost) {
+      LOG(debug, "device {} cudaDeviceMapHost=1", gpu);
+    } else {
+      LOG(error, "device {} cudaDeviceMapHost=0", gpu);
+      exit(-1);
+    }
+  }
+
   // read data / build
   auto start = std::chrono::system_clock::now();
 
-  CircularBuffer<128, std::vector<Edge64>> queue;
+  LockQueue<std::vector<Edge64>> queue;
   pangolin::COO<Index64> csr;
   volatile bool filling = true;
   // start a thread to read the matrix data
