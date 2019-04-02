@@ -60,6 +60,114 @@ private:
   }
 };
 
+/*! A multi-producer, multi-consumer queue
+
+    full if head_ + 1 == tail_
+    empty if head_ == tail_
+
+    \tparam N the number of slots in the buffer. N+1 slots are allocated, one
+   is wasted
+*/
+template <typename T, size_t N = 127> struct LockQueue2 {
+
+  typedef T value_type;
+
+  static constexpr size_t BUF_SIZE = N + 1;
+  volatile size_t head_;
+  volatile size_t tail_;
+  std::mutex mtx_;
+  T buffer_[BUF_SIZE];
+
+  LockQueue2() : head_(1), tail_(0) {}
+
+  // returns false if queue is full
+  bool push(const T &val) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    if (unsafe_full()) {
+      return false;
+    }
+
+    buffer_[head_] = val;
+    advance_head();
+    return true;
+  }
+
+  // returns number of inserted elements
+  size_t push_many(const std::vector<T> &vals) {
+    size_t i = 0;
+    {
+      std::lock_guard<std::mutex> lock(mtx_);
+
+      // insert as many elements as possible
+
+      for (i = 0; !unsafe_full(); ++i, advance_head()) {
+        buffer_[head_] = vals[i];
+      }
+    }
+
+    // erase inserted elements
+    vals.erase(vals.begin(), vals.begin() + i);
+
+    return i;
+  }
+
+  // returns false if queue was empty
+  bool pop(T &t) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    if (unsafe_empty()) {
+      return false;
+    }
+    t = buffer_[tail_];
+    advance_tail();
+    return true;
+  }
+
+  // returns number of popped elements
+  size_t pop_many(std::vector<T> &vals) {
+    vals.clear();
+    vals.reserve(unsafe_count());
+    {
+      std::lock_guard<std::mutex> lock(mtx_);
+
+      // pop as many elements as possible
+      for (size_t i = 0; !unsafe_empty(); ++i, advance_tail()) {
+        vals.push_back(buffer_[tail_]);
+      }
+    }
+
+    return vals.size();
+  }
+
+  bool empty() {
+    std::lock_guard<std::mutex> lock(mtx_);
+    return unsafe_empty();
+  }
+  bool full() {
+    std::lock_guard<std::mutex> lock(mtx_);
+    return unsafe_full();
+  }
+  size_t count() {
+    std::lock_guard<std::mutex> lock(mtx_);
+    return unsafe_count();
+  }
+
+private:
+  bool unsafe_count() { return (head_ - tail_) % BUF_SIZE; }
+  bool unsafe_full() { return (head_ + 1) % BUF_SIZE == tail_; }
+  bool unsafe_empty() { return head_ == tail_; }
+
+  void advance_head() {
+    head_ = (head_ + 1) % BUF_SIZE;
+    SPDLOG_TRACE(pangolin::logger::console, "head -> {}, count={}", head_,
+                 count_);
+  }
+  void advance_tail() {
+    tail_ = (tail_ + 1) % BUF_SIZE;
+    SPDLOG_TRACE(pangolin::logger::console, "tail -> {}, count={}", tail_,
+                 count_);
+  }
+};
+
 template <typename EDGE>
 void produce(const std::string path, LockQueue<std::vector<EDGE>> &queue,
              volatile bool *busy) {
