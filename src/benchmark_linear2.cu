@@ -1,6 +1,7 @@
 #include <fmt/format.h>
 #include <iostream>
 #include <mutex>
+#include <queue>
 #include <thread>
 
 #include <nvToolsExt.h>
@@ -13,215 +14,165 @@
 
     Not safe for simultaneous calls to
 */
-template <typename T, size_t N = 128> struct LockQueue {
+template <typename T, size_t N = 128> struct BoundedBuffer {
 
   typedef T value_type;
 
-  volatile size_t head_;
-  volatile size_t tail_;
-  volatile size_t count_;
+  size_t head_;
+  size_t tail_;
+  size_t count_;
   std::mutex mtx_;
+  std::condition_variable notFull;
+  std::condition_variable notEmpty;
   T buffer_[N];
 
-  LockQueue() : head_(0), tail_(0), count_(0) {}
+private:
+  bool close_; //!< close the queue
 
-  void push(const T &val) {
-    std::lock_guard<std::mutex> lock(mtx_);
-    assert(count_ < N);
-    buffer_[head_] = val;
-    advance_head();
+public:
+  BoundedBuffer() : close_(false), head_(0), tail_(0), count_(0) {}
+
+  /*! \brief Pops entries off vals to fill available buffer space
+   */
+  void push_some(std::queue<T> &vals) {
+    assert(!close_);
+    std::unique_lock<std::mutex> lock(mtx_);
+
+    // wait for the buffer to not be full
+    notFull.wait(lock, [this]() { return !full(); });
+
+    assert(!full());
+
+    // pop enties off of vals until the buffer is full
+    const size_t toPush = std::min(N - count(), vals.size());
+    for (size_t i = 0; i < toPush; ++i) {
+      buffer_[head_] = vals.front();
+      vals.pop();
+      advance_head();
+    }
+
+    lock.unlock();
+
+    // release anyone waiting on the buffer to not be empty
+    notEmpty.notify_one();
+
+    SPDLOG_DEBUG(pangolin::logger::console, "pushed {}", toPush);
     return;
   }
 
-  T pop() {
-    std::lock_guard<std::mutex> lock(mtx_);
-    assert(count_ > 0);
-    T val = buffer_[tail_];
-    advance_tail();
-    return val;
+  /*!
+    If the buffer is not closed, blocks until there is at least one entry in the
+    buffer and then returns the buffer entries.
+    If the buffer is closed, zero entries are returned.
+  */
+  std::vector<T> pop_some() {
+    std::vector<T> vals;
+
+    std::unique_lock<std::mutex> lock(mtx_);
+
+    // wait until the buffer is not empty or it is closed
+    notEmpty.wait(lock, [this]() { return (!empty()) || close_; });
+
+    // if the buffer is closed, this could add no elements to vals
+    while (!empty()) {
+      vals.emplace_back(buffer_[tail_]);
+      advance_tail();
+    }
+
+    lock.unlock();
+
+    // activate any thread waiting for the buffer to not be full
+    notFull.notify_one();
+    SPDLOG_DEBUG(pangolin::logger::console, "popped {}", vals.size());
+    return vals;
   }
 
-  bool empty() { return count_ == 0; }
-  bool full() { return count_ >= N; }
-  size_t count() { return count_; }
+  void close() {
+    close_ = true;
+    // wake up everyone who might be trying to pop from the queue
+    notEmpty.notify_all();
+  }
+
+  bool empty() const { return count_ == 0; }
+  bool full() const { return count_ >= N; }
+  size_t count() const { return count_; }
+  bool closed() const { return close_; }
 
 private:
   void advance_head() {
     head_ = (head_ + 1) % N;
     count_++;
-    SPDLOG_TRACE(pangolin::logger::console, "head -> {}, count={}", head_,
-                 count_);
+    // SPDLOG_TRACE(pangolin::logger::console, "head -> {}, count={}", head_,
+    //              count_);
   }
   void advance_tail() {
     tail_ = (tail_ + 1) % N;
     count_--;
-    SPDLOG_TRACE(pangolin::logger::console, "tail -> {}, count={}", tail_,
-                 count_);
-  }
-};
-
-/*! A multi-producer, multi-consumer queue
-
-    full if head_ + 1 == tail_
-    empty if head_ == tail_
-
-    \tparam N the number of slots in the buffer. N+1 slots are allocated, one
-   is wasted
-*/
-template <typename T, size_t N = 127> struct LockQueue2 {
-
-  typedef T value_type;
-
-  static constexpr size_t BUF_SIZE = N + 1;
-  volatile size_t head_;
-  volatile size_t tail_;
-  std::mutex mtx_;
-  T buffer_[BUF_SIZE];
-
-  LockQueue2() : head_(1), tail_(0) {}
-
-  // returns false if queue is full
-  bool push(const T &val) {
-    std::lock_guard<std::mutex> lock(mtx_);
-    if (unsafe_full()) {
-      return false;
-    }
-
-    buffer_[head_] = val;
-    advance_head();
-    return true;
-  }
-
-  // returns number of inserted elements
-  size_t push_many(const std::vector<T> &vals) {
-    size_t i = 0;
-    {
-      std::lock_guard<std::mutex> lock(mtx_);
-
-      // insert as many elements as possible
-
-      for (i = 0; !unsafe_full(); ++i, advance_head()) {
-        buffer_[head_] = vals[i];
-      }
-    }
-
-    // erase inserted elements
-    vals.erase(vals.begin(), vals.begin() + i);
-
-    return i;
-  }
-
-  // returns false if queue was empty
-  bool pop(T &t) {
-    std::lock_guard<std::mutex> lock(mtx_);
-    if (unsafe_empty()) {
-      return false;
-    }
-    t = buffer_[tail_];
-    advance_tail();
-    return true;
-  }
-
-  // returns number of popped elements
-  size_t pop_many(std::vector<T> &vals) {
-    vals.clear();
-    vals.reserve(unsafe_count());
-    {
-      std::lock_guard<std::mutex> lock(mtx_);
-
-      // pop as many elements as possible
-      for (size_t i = 0; !unsafe_empty(); ++i, advance_tail()) {
-        vals.push_back(buffer_[tail_]);
-      }
-    }
-
-    return vals.size();
-  }
-
-  bool empty() {
-    std::lock_guard<std::mutex> lock(mtx_);
-    return unsafe_empty();
-  }
-  bool full() {
-    std::lock_guard<std::mutex> lock(mtx_);
-    return unsafe_full();
-  }
-  size_t count() {
-    std::lock_guard<std::mutex> lock(mtx_);
-    return unsafe_count();
-  }
-
-private:
-  bool unsafe_count() { return (head_ - tail_) % BUF_SIZE; }
-  bool unsafe_full() { return (head_ + 1) % BUF_SIZE == tail_; }
-  bool unsafe_empty() { return head_ == tail_; }
-
-  void advance_head() {
-    head_ = (head_ + 1) % BUF_SIZE;
-    SPDLOG_TRACE(pangolin::logger::console, "head -> {}, count={}", head_,
-                 unsafe_count());
-  }
-  void advance_tail() {
-    tail_ = (tail_ + 1) % BUF_SIZE;
-    SPDLOG_TRACE(pangolin::logger::console, "tail -> {}, count={}", tail_,
-                 unsafe_count());
+    // SPDLOG_TRACE(pangolin::logger::console, "tail -> {}, count={}", tail_,
+    //              count_);
   }
 };
 
 template <typename EDGE>
-void produce(const std::string path, LockQueue<std::vector<EDGE>> &queue,
-             volatile bool *busy) {
-  *busy = true;
+void produce(const std::string path, BoundedBuffer<EDGE> &queue) {
   pangolin::EdgeListFile file(path);
 
   std::vector<EDGE> fileEdges;
+  std::queue<EDGE> edgeQueue;
+
+  // while (true) {
+
+  //   // fill up the edgeQueue
+  //   size_t numRead = file.get_edges(fileEdges, 50 - edgeQueue.size());
+
+  //   for (const auto e : fileEdges) {
+  //     edgeQueue.push(e);
+  //   }
+  // }
+
+  // while (!edgeQueue.empty()) {
+  //   queue.push_some(edgeQueue);
+  // }
+
   while (file.get_edges(fileEdges, 50)) {
 
-    // wait for queue to not be full
-    while (queue.full()) {
-      // std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    for (const auto e : fileEdges) {
+      edgeQueue.push(e);
     }
-    queue.push(fileEdges);
+    while (!edgeQueue.empty()) {
+      queue.push_some(edgeQueue);
+    }
   }
-  *busy = false;
+
+  queue.close();
 }
 
 template <typename Mat, typename EDGE>
-void consume(
-    LockQueue<std::vector<EDGE>> &queue, Mat &mat,
-    const volatile bool *filling //!< [in] is the queue still being filled?
-) {
+void consume(BoundedBuffer<EDGE> &queue, Mat &mat) {
 
   auto upperTriangular = [](pangolin::EdgeTy<uint64_t> e) {
     return e.first < e.second;
   };
 
   // keep grabbing while queue is filling
-  LOG(debug, "reading queue while filling");
-  while (*filling) {
-    if (!queue.empty()) {
-      std::vector<EDGE> vals = queue.pop();
-      for (auto &val : vals) {
-        if (upperTriangular(val)) {
-          SPDLOG_TRACE(pangolin::logger::console, "{} {}", val.first,
-                       val.second);
-          mat.add_next_edge(val);
-        }
-      }
+  LOG(debug, "reading queue");
+  while (true) {
+    std::vector<EDGE> vals = queue.pop_some();
+    if (vals.empty()) {
+      // the queue has no values and no more are coming, so we can quit
+      assert(queue.empty());
+      assert(queue.closed());
+      break;
     }
-  }
-  // drain queue
-  LOG(debug, "draining queue after filling stops");
-  while (!queue.empty()) {
-    std::vector<EDGE> vals = queue.pop();
-    for (auto &val : vals) {
+
+    for (const auto val : vals) {
       if (upperTriangular(val)) {
-        SPDLOG_TRACE(pangolin::logger::console, "drain {} {}", val.first,
-                     val.second);
+        SPDLOG_TRACE(pangolin::logger::console, "{} {}", val.first, val.second);
         mat.add_next_edge(val);
       }
     }
   }
+
   mat.finish_edges();
 }
 
@@ -346,22 +297,20 @@ int main(int argc, char **argv) {
   // read data / build
   auto start = std::chrono::system_clock::now();
 
-  LockQueue<std::vector<Edge64>> queue;
+  BoundedBuffer<Edge64> queue;
   pangolin::COO<Index64> csr;
-  volatile bool readerActive = true;
   // start a thread to read the matrix data
   LOG(debug, "start disk reader");
-  std::thread reader(produce<Edge64>, path, std::ref(queue), &readerActive);
+  std::thread reader(produce<Edge64>, path, std::ref(queue));
 
   // start a thread to build the matrix
   LOG(debug, "start csr build");
   std::thread builder(consume<pangolin::COO<Index64>, Edge64>, std::ref(queue),
-                      std::ref(csr), &readerActive);
+                      std::ref(csr));
   // consume(queue, csr, &readerActive);
 
   LOG(debug, "waiting for disk reader...");
   reader.join();
-  readerActive = false;
   LOG(debug, "waiting for CSR builder...");
   builder.join();
   assert(queue.empty());
