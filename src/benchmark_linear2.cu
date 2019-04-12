@@ -1,3 +1,4 @@
+#include <deque>
 #include <fmt/format.h>
 #include <iostream>
 #include <mutex>
@@ -10,63 +11,77 @@
 #include "pangolin/pangolin.cuh"
 #include "pangolin/pangolin.hpp"
 
-/*! A single-producer, single-consumer queue
+/*! A circular buffer of bounded size
 
-    Not safe for simultaneous calls to
+    \tparam N the number of buffer entries
+    \tparam T the type of the entry
 */
-template <typename T, size_t N = 128> struct BoundedBuffer {
+template <typename T, size_t N = 512> struct BoundedBuffer {
 
   typedef T value_type;
 
+private:
   size_t head_;
   size_t tail_;
   size_t count_;
   std::mutex mtx_;
-  std::condition_variable notFull;
-  std::condition_variable notEmpty;
+  std::condition_variable notFull;  //!< block pushers until queue is not full
+  std::condition_variable notEmpty; //!< block poppers until queue is not empty
   T buffer_[N];
-
-private:
-  bool close_; //!< close the queue
+  bool close_; //!< true if new values will never be added to the queue
 
 public:
   BoundedBuffer() : close_(false), head_(0), tail_(0), count_(0) {}
 
-  /*! \brief Pops entries off vals to fill available buffer space
+  /*! \brief Fills available space in the bounded buffer with entries from the
+    front of vals
+
    */
-  void push_some(std::queue<T> &vals) {
-    assert(!close_);
+  void push_some(std::deque<T> &vals //!< [inout] the source of values to add to
+                                     //!< the BoundedBuffer
+  ) {
+    assert(!closed());
     std::unique_lock<std::mutex> lock(mtx_);
 
     // wait for the buffer to not be full
     notFull.wait(lock, [this]() { return !full(); });
 
     assert(!full());
+    assert(!closed());
 
-    // pop enties off of vals until the buffer is full
-    const size_t toPush = std::min(N - count(), vals.size());
-    for (size_t i = 0; i < toPush; ++i) {
-      buffer_[head_] = vals.front();
-      vals.pop();
+    // add entries from the front of vals
+    // we will remove entries from vals after releasing the lock
+    const size_t numToAdd = std::min(N - count(), vals.size());
+    for (size_t i = 0; i < numToAdd; ++i) {
+      buffer_[head_] = vals[i];
       advance_head();
     }
 
     lock.unlock();
 
     // release anyone waiting on the buffer to not be empty
-    notEmpty.notify_one();
+    notEmpty.notify_all();
 
-    SPDLOG_DEBUG(pangolin::logger::console, "pushed {}", toPush);
+    // pop the values off the front of the queue before returning
+    for (size_t i = 0; i < numToAdd; ++i) {
+      vals.pop_front();
+    }
+
+    // SPDLOG_DEBUG(pangolin::logger::console, "pushed {}", toPush);
     return;
   }
 
-  /*!
+  /*! \brief remove as many values from the BoundedBuffer as possible and return
+
     If the buffer is not closed, blocks until there is at least one entry in the
     buffer and then returns the buffer entries.
     If the buffer is closed, zero entries are returned.
   */
   std::vector<T> pop_some() {
     std::vector<T> vals;
+    // before acquiring the lock, reserve space for possibly removing all
+    // elements from the buffer
+    vals.reserve(N);
 
     std::unique_lock<std::mutex> lock(mtx_);
 
@@ -81,12 +96,15 @@ public:
 
     lock.unlock();
 
-    // activate any thread waiting for the buffer to not be full
-    notFull.notify_one();
-    SPDLOG_DEBUG(pangolin::logger::console, "popped {}", vals.size());
+    // wake anyone waiting on the buffer to not be full
+    notFull.notify_all();
+    // SPDLOG_DEBUG(pangolin::logger::console, "popped {}", vals.size());
     return vals;
   }
 
+  /*! \brief Inform the BoundedBuffer that no new entries will be added
+
+  */
   void close() {
     close_ = true;
     // wake up everyone who might be trying to pop from the queue
@@ -101,13 +119,13 @@ public:
 private:
   void advance_head() {
     head_ = (head_ + 1) % N;
-    count_++;
+    ++count_;
     // SPDLOG_TRACE(pangolin::logger::console, "head -> {}, count={}", head_,
     //              count_);
   }
   void advance_tail() {
     tail_ = (tail_ + 1) % N;
-    count_--;
+    --count_;
     // SPDLOG_TRACE(pangolin::logger::console, "tail -> {}, count={}", tail_,
     //              count_);
   }
@@ -118,26 +136,12 @@ void produce(const std::string path, BoundedBuffer<EDGE> &queue) {
   pangolin::EdgeListFile file(path);
 
   std::vector<EDGE> fileEdges;
-  std::queue<EDGE> edgeQueue;
-
-  // while (true) {
-
-  //   // fill up the edgeQueue
-  //   size_t numRead = file.get_edges(fileEdges, 50 - edgeQueue.size());
-
-  //   for (const auto e : fileEdges) {
-  //     edgeQueue.push(e);
-  //   }
-  // }
-
-  // while (!edgeQueue.empty()) {
-  //   queue.push_some(edgeQueue);
-  // }
+  std::deque<EDGE> edgeQueue;
 
   while (file.get_edges(fileEdges, 50)) {
 
     for (const auto e : fileEdges) {
-      edgeQueue.push(e);
+      edgeQueue.push_back(e);
     }
     while (!edgeQueue.empty()) {
       queue.push_some(edgeQueue);

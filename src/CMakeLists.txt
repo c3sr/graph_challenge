@@ -23,7 +23,7 @@ function(add_exe)
     -Xcompiler=-Wfloat-equal;
     -Xcompiler=-Wundef;
     -Xcompiler=-Wvla;
-    -Xcompiler=-Wshadow>
+    -Xcompiler=-Wshadow;>
     )
     target_link_libraries(${PARSED_ARGS_NAME} PUBLIC pangolin::pangolin)
     target_link_libraries(${PARSED_ARGS_NAME} PUBLIC nvToolsExt)
