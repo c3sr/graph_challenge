@@ -1,146 +1,181 @@
 
-A = [
-    [0,1,4],
-    [0,1],
-    [2],
-    [3,5],
-    [4],
-    [3,5],
-]
+from scipy.sparse import *
+from scipy import *
+import numpy as np
+import sys
 
-B = [
-    [0,1,4],
-    [0,1],
-    [2],
-    [3,5],
-    [4],
-    [3,5],
-]
-
-A = [
-    [1,2],
-    [2,3,4],
-    [3,4],
-    [4],
-    [],
-]
-
-B = A
+A = np.array([ 
+[0,1,1,0,0],
+[0,0,1,1,1],
+[0,0,0,1,1],
+[0,0,0,0,1],
+[0,0,0,0,0],
+ ])
 
 
-def launch(func):
-    return func
+U = csr_matrix(np.array([ 
+[0,1,1,0,0],
+[0,0,1,1,1],
+[0,0,0,1,1],
+[0,0,0,0,1],
+[0,0,0,0,0],
+ ]))
 
-# @launch
-def esc(A,B, rows=set([0,1,2,3,4])):
-    C = 0
-    # expansion
+L = csr_matrix(np.array([ 
+[0,0,0,0,0],
+[1,0,0,0,0],
+[1,1,0,0,0],
+[0,1,1,0,0],
+[0,1,1,1,0],
+]))
+
+
+print("L.L.*L",L.dot(L).multiply(L).sum())
+print("L.U.*L",L.dot(U).multiply(L).sum())
+print("U.L.*L",U.dot(L).multiply(L).sum())
+print("U.U.*L",U.dot(U).multiply(L).sum())
+print("L.L.*U",L.dot(L).multiply(U).sum())
+print("L.U.*U",L.dot(U).multiply(U).sum())
+print("U.L.*U",U.dot(L).multiply(U).sum())
+print("U.U.*U",U.dot(U).multiply(U).sum())
+
+print("L.L.*A",L.dot(L).multiply(L+U).sum())
+print("L.U.*A",L.dot(U).multiply(L+U).sum())
+print("U.L.*A",U.dot(L).multiply(L+U).sum())
+print("U.U.*A",U.dot(U).multiply(L+U).sum())
+
+
+# square two CSR matrices 
+def square_scipy(A):
+    P = A.dot(A).tocsr().sorted_indices()
+    return P
+
+# square two CSR matrices 
+def square_esc(A, rows=None):
+    """
+    square CSR A using the esc method in Dalton (2012)
+    """
+
+    if not rows:
+        rows = range(A.shape[0])
+
+    # expand
     C_hat = []
-    for i in rows: # range(C.num_rows)
-        for k in A[i]:
-            for j in B[k]:
+    for i in rows: # for each row in C
+        # print("row", i)
+        # get the non-zero columns of A
+        for k in A.indices[A.indptr[i]:A.indptr[i+1]]:
+            # print(k)
+            # each non-zero column of A grabs all entries from the corresponding row of B
+            for j in A.indices[A.indptr[k]:A.indptr[k+1]]:
                 C_hat += [(i, j)]
-    print("C_hat (after expand):", len(C_hat), C_hat)
+    print("after expand", C_hat)
 
-
-    # sort
+    #sort
     C_hat = sorted(C_hat)
-    print("C_hat after sort:", C_hat)
+    # print("after sort  ", C_hat)
 
-    # contract
-    for i in rows: # range(C.num_rows)
+    #contract
+    data = []
+    rowInd = []
+    colInd = []
+    for i in range(A.shape[0]): # for each row in C
         v = 0
-        # extract partial products for row i
-        J = [t[1] for t in C_hat if t[0] == i]
-        # print(i, J, A[i])
-        for j in J: # if i,j is non-zero in A
-            if j in A[i]:
-                C += 1
-    print(C)
-    return C
+        J = [j for x,j in C_hat if x == i]
+        for ji, j in enumerate(J):
+            # print(ji, len(J))
+            v += 1
+            if ji >= len(J) - 1 or J[ji] != J[ji+1]:
+                data += [v]
+                rowInd += [i]
+                colInd += [j]
+                v = 0
+
+    return csr_matrix((data, (rowInd, colInd))).sorted_indices()
 
 
-# should also load A into shared memory.
-# assign one thread block to each chunk of a row of A
-def local_esc(A,B):
-    ## local storage for each row
-    sharedSz = 4
-    sharedC_hat = [[]  for i in range(5)]
-    sharedC = [0 for i in range(5)]
-    sharedA = [[] for i in range(5)]
+# square two CSR matrices 
+def square_esc_local(A, localMemSz, rows=None):
+    """
+    square CSR A using the esc method in Dalton (2012)
+    """
 
-    ## rows that won't fit in local memory
-    globalRows = set()
+    if not rows:
+        rows = range(A.shape[0])
 
-    C = 0
+    # resulting matrix data
+    data = []
+    rowInd = []
+    colInd = []
 
-    # analysis
-    # figure out how many expanded entries will exist for each row
-    # implemented as a block prefix scan
-    for i in range(5): # range(C.num_rows)
+    # expand
+    
+    for i in rows: # for each row in C
+        C_hat = [] # per-row C_hat
+        # print("row", i)
+        # get the non-zero columns of A
+        for k in A.indices[A.indptr[i]:A.indptr[i+1]]:
+            # print(k)
+            # each non-zero column of A grabs all entries from the corresponding row of B
+            for j in A.indices[A.indptr[k]:A.indptr[k+1]]:
+                C_hat += [(i, j)]
+        assert len(C_hat) <= 4
+        print("row", i, "after expand", C_hat)
+
+        #sort
+        C_hat = sorted(C_hat)
+        print("row", i, "after sort  ", C_hat)
+
+    #contract
+        v = 0
+        J = [j for x,j in C_hat if x == i]
+        for ji, j in enumerate(J):
+            # print(ji, len(J))
+            v += 1
+            if ji >= len(J) - 1 or J[ji] != J[ji+1]:
+                data += [v]
+                rowInd += [i]
+                colInd += [j]
+                v = 0
+
+    return csr_matrix((data, (rowInd, colInd))).sorted_indices()
+
+def analysis_esc(A, n):
+    """
+    return sets of rows that produce (fewer, more) than n partial products
+    """
+    
+    smallRows = set()
+    bigRows = set()
+    for i in range(A.shape[0]): # for each row in C
         numPartialProducts = 0
-        for k in A[i]:
-            for j in B[k]:
-                numPartialProducts += 1
-        if numPartialProducts > sharedSz:
-            globalRows.add(i)
-    print("global rows:", globalRows)
+        # print("row", i)
+        # get the non-zero columns of A
+        for k in A.indices[A.indptr[i]:A.indptr[i+1]]:
+            # print(k)
+            # each non-zero column of A grabs all entries from the corresponding row of B
+            numPartialProducts += A.indptr[k+1] - A.indptr[k]
+        if numPartialProducts > n:
+            bigRows.add(i)
+        else:
+            smallRows.add(i)
 
-    # load A into shared memory
-    for i in range(5):
-        if i not in globalRows:
-            sharedA[i] = A[i]
-    print("local As:")
-    for i,s in enumerate(sharedA):
-        print(s)
+    return smallRows, bigRows
 
-    # expansion
-    # place of expanding into C_hat is from the prefix scan
-    C_hat = []
-    for i in range(5): # range(C.num_rows)
-        if i not in globalRows:
-            # print("A[{}] {}".format(i, A[i]))
-            for k in sharedA[i]:
-                for j in B[k]:
-                    sharedC_hat[i] += [(i, j)]
-    print("local memory: (after expand)")
-    for i,s in enumerate(sharedC_hat):
-        print(s)
+print(square_scipy(U))
 
+smallRows, bigRows = analysis_esc(U, 2)
+print("small:", smallRows, "big:", bigRows)
 
-    # sort
-    # CUB thread block sort
-    for i in range(5): # range(C.num_rows)
-        sharedC_hat[i] = sorted(sharedC_hat[i])
-    print("local memory: (after sort)")
-    for i,s in enumerate(sharedC_hat):
-        print(s)
-
-    # contract
-    for i in range(5): # range(C.num_rows)
-        # extract partial products for row i
-        J = (t[1] for t in sharedC_hat[i])
-        # print(i, J, A[i])
-        for j in J: # if i,j is non-zero in A
-            if j in sharedA[i]:
-                sharedC[i] += 1
-    print("local memory: (after contract)")
-    for i,s in enumerate(sharedC):
-        print(s)
-
-    # reduction over  C
-    C = 0
-    for i in range(5):
-        C += sharedC[i]
-    print("C after local")
-    print(C)
-
-    C += esc(A,B, rows=globalRows)
-    print("C after global")
-    print(C)
-    return C
+smallP = square_esc_local(U, 2, smallRows)
+bigP = square_esc(U, bigRows)
+print(bigP)
+print(smallP)
 
 
 
 
-local_esc(A,B)
+
+sys.exit()
+
+
