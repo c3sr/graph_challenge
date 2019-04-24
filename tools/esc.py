@@ -119,7 +119,7 @@ def square_esc_local(A, localMemSz, rows=None):
             # each non-zero column of A grabs all entries from the corresponding row of B
             for j in A.indices[A.indptr[k]:A.indptr[k+1]]:
                 C_hat += [(i, j)]
-        assert len(C_hat) <= 4
+        assert len(C_hat) <= localMemSz
         print("row", i, "after expand", C_hat)
 
         #sort
