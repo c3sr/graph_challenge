@@ -1,17 +1,6 @@
-/*!
-
-Count triangles using the linear search.
-Simultaneously read and build the GPU implementation.
-
-*/
-
-#include <deque>
-#include <iostream>
-#include <mutex>
-#include <queue>
-#include <thread>
-
 #include <fmt/format.h>
+#include <iostream>
+#include <map>
 
 #include <nvToolsExt.h>
 
@@ -22,7 +11,8 @@ Simultaneously read and build the GPU implementation.
 using pangolin::BoundedBuffer;
 
 template <typename EDGE>
-void produce(const std::string path, BoundedBuffer<EDGE> &queue) {
+void produce(const std::string path,
+             std::map<int, BoundedBuffer<EDGE>> &NUMAToQueue) {
   pangolin::EdgeListFile file(path);
 
   std::vector<EDGE> fileEdges;
@@ -30,19 +20,32 @@ void produce(const std::string path, BoundedBuffer<EDGE> &queue) {
 
   while (file.get_edges(fileEdges, 50)) {
 
-    for (const auto e : fileEdges) {
-      edgeQueue.push_back(e);
-    }
-    while (!edgeQueue.empty()) {
-      queue.push_some(edgeQueue);
+    // add the edges to each queue
+    for (auto &kv : NUMAToQueue) {
+      auto &queue = kv.second;
+      for (const auto e : fileEdges) {
+        edgeQueue.push_back(e);
+      }
+      while (!edgeQueue.empty()) {
+        queue.push_some(edgeQueue);
+      }
     }
   }
 
-  queue.close();
+  for (auto &kv : NUMAToQueue) {
+    auto &queue = kv.second;
+    queue.close();
+  }
 }
 
 template <typename Mat, typename EDGE>
-void consume(BoundedBuffer<EDGE> &queue, Mat &mat) {
+void consume(const int numa, BoundedBuffer<EDGE> &queue, Mat &mat) {
+
+  // bind to NUMA node if available
+  if (pangolin::numa::available()) {
+    pangolin::numa::set_strict();
+    pangolin::numa::bind(numa);
+  }
 
   auto upperTriangular = [](pangolin::EdgeTy<uint64_t> e) {
     return e.first < e.second;
@@ -68,8 +71,17 @@ void consume(BoundedBuffer<EDGE> &queue, Mat &mat) {
   }
 
   mat.finish_edges();
+
+  // unbind when done
+  if (pangolin::numa::available()) {
+    pangolin::numa::unbind();
+  }
 }
 
+/*!
+  Create one unified-memory data structure in each NUMA region close to the used
+  GPUs.
+*/
 int main(int argc, char **argv) {
 
   typedef uint64_t Index64;
@@ -188,26 +200,68 @@ int main(int argc, char **argv) {
     }
   }
 
+  // associate a numa region with each GPU
+  // arbitrarily choose the first numa region that has affinity with each GPU
+  // each NUMA region may have multiple GPUs, but each GPU has only a single
+  // NUMA region
+  std::map<int, int> GPUToNUMA;
+  std::map<int, std::set<int>> NUMAToGPUs;
+  for (const auto &gpu : gpus) {
+    std::set<int> cpus = pangolin::topology::device_cpu_affinity(gpu);
+    std::set<int> numas = pangolin::topology::cpu_numa_affinity(cpus);
+    assert(!numas.empty() && "expect to find at least one region");
+    int numa = *numas.begin();
+    LOG(debug, "GPU {} -> NUMA {}", gpu, numa);
+    GPUToNUMA.insert(std::make_pair(gpu, numa));
+
+    if (NUMAToGPUs.count(numa) == 0) {
+      NUMAToGPUs[numa] = std::set<int>();
+    }
+    NUMAToGPUs[numa].insert(gpu);
+    LOG(debug, "NUMA {} -> GPU {}", numa, gpu);
+  }
+
+  // create a queue for each numa region that has a GPU. A single producer will
+  // read from disk and insert edges into multiple consumer queues
+  std::map<int, pangolin::BoundedBuffer<Edge64>> NUMAToQueue;
+  std::map<int, pangolin::COO<Index64>> NUMAToCSR;
+  for (auto &kv : NUMAToGPUs) {
+    int numa = kv.first;
+    NUMAToQueue.insert(std::make_pair(numa, BoundedBuffer<Edge64>()));
+    NUMAToCSR.insert(std::make_pair(numa, pangolin::COO<Index64>()));
+  }
+
   // read data / build
   auto start = std::chrono::system_clock::now();
 
-  BoundedBuffer<Edge64> queue;
-  pangolin::COO<Index64> csr;
   // start a thread to read the matrix data
   LOG(debug, "start disk reader");
-  std::thread reader(produce<Edge64>, path, std::ref(queue));
+  std::thread reader(produce<Edge64>, path, std::ref(NUMAToQueue));
 
-  // start a thread to build the matrix
-  LOG(debug, "start csr build");
-  std::thread builder(consume<pangolin::COO<Index64>, Edge64>, std::ref(queue),
-                      std::ref(csr));
-  // consume(queue, csr, &readerActive);
+  // start one thread per numa region to build the COOs
+  LOG(debug, "start csr builders");
+  std::vector<std::thread> builders;
+  for (auto &kv : NUMAToQueue) {
+    int numa = kv.first;
+    LOG(debug, "start mat builder for numa {}", numa);
+    auto &queue = kv.second;
+    auto &csr = NUMAToCSR[numa];
+    builders.push_back(std::thread(consume<pangolin::COO<Index64>, Edge64>,
+                                   numa, std::ref(queue), std::ref(csr)));
+  }
 
   LOG(debug, "waiting for disk reader...");
   reader.join();
-  LOG(debug, "waiting for CSR builder...");
-  builder.join();
-  assert(queue.empty());
+  LOG(debug, "waiting for CSR builders...");
+  for (auto &builder : builders) {
+    builder.join();
+  }
+
+  for (auto &kv : NUMAToQueue) {
+    auto &queue = kv.second;
+    assert(queue.closed());
+    assert(queue.empty());
+  }
 
   double elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
   LOG(info, "read_data/build time {}s", elapsed);
@@ -218,6 +272,7 @@ int main(int argc, char **argv) {
   uint64_t tris;
 
   for (int i = 0; i < iters; ++i) {
+    /*
     // read-mostly
     nvtxRangePush("read-mostly");
     start = std::chrono::system_clock::now();
@@ -259,7 +314,7 @@ int main(int argc, char **argv) {
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
     nvtxRangePop();
     LOG(info, "prefetch CSR time {}s", elapsed);
-
+    */
     // count triangles
     nvtxRangePush("count");
     start = std::chrono::system_clock::now();
@@ -272,16 +327,24 @@ int main(int argc, char **argv) {
     }
 
     // determine the number of edges per gpu
-    const size_t edgesPerGPU = (csr.nnz() + gpus.size() - 1) / gpus.size();
+    // all mats are the same, so just use the first
+    const auto &mat = NUMAToCSR.begin()->second;
+    const size_t edgesPerGPU = (mat.nnz() + gpus.size() - 1) / gpus.size();
     LOG(debug, "{} edges per GPU", edgesPerGPU);
 
     // launch counting operations
     size_t edgeStart = 0;
     for (auto &counter : counters) {
+
+      // determine the right CSR for this GPU by looking up which NUMA region
+      // the GPU is using
+      const int numa = GPUToNUMA[counter.device()];
+      auto &csr = NUMAToCSR[numa];
       const size_t edgeStop = std::min(edgeStart + edgesPerGPU, csr.nnz());
       const size_t numEdges = edgeStop - edgeStart;
       LOG(debug, "start async count on GPU {} ({} edges)", counter.device(),
           numEdges);
+
       counter.count_async(csr.view(), numEdges, edgeStart);
       edgeStart += edgesPerGPU;
     }
@@ -297,10 +360,10 @@ int main(int argc, char **argv) {
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
     nvtxRangePop();
     LOG(info, "count time {}s", elapsed);
-    LOG(info, "{} triangles ({} teps)", total, csr.nnz() / elapsed);
+    LOG(info, "{} triangles ({} teps)", total, mat.nnz() / elapsed);
     times.push_back(elapsed);
     tris = total;
-    nnz = csr.nnz();
+    nnz = mat.nnz();
   }
 
   std::cout << path << ",\t" << nnz << ",\t" << tris;

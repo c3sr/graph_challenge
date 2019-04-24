@@ -1,3 +1,10 @@
+/*!
+
+Count triangles using the per-edge linear search.
+Use one thread for each triangle counter through OpenMP.
+
+*/
+
 #include <fmt/format.h>
 #include <iostream>
 
@@ -181,6 +188,7 @@ int main(int argc, char **argv) {
     uint64_t total = 0; // total triangle count
 
     omp_set_num_threads(gpus.size());
+    start = std::chrono::system_clock::now();
 #pragma omp parallel for
     for (size_t gpuIdx = 0; gpuIdx < gpus.size(); ++gpuIdx) {
       const int gpu = gpus[gpuIdx];
@@ -189,26 +197,25 @@ int main(int argc, char **argv) {
 
       // prefetch
       if (prefetchAsync) {
-        LOG(debug, "{}: prefetch csr to device {}", omp_get_thread_num(), gpu);
+        LOG(debug, "omp thread {}: prefetch csr to device {}",
+            omp_get_thread_num(), gpu);
         nvtxRangePush("prefetch");
         csr.prefetch_async(gpu, stream);
         nvtxRangePop();
       }
-      start = std::chrono::system_clock::now();
-      elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
-      LOG(info, "prefetch CSR time {}s", elapsed);
 
       // count triangles
       nvtxRangePush("count");
-      start = std::chrono::system_clock::now();
 
       // create async counters
-      LOG(debug, "{}: create device {} counter", omp_get_thread_num(), gpu);
+      LOG(debug, "omp thread {}: create device {} counter",
+          omp_get_thread_num(), gpu);
       pangolin::LinearTC counter(gpu, stream);
 
       // determine the number of edges per gpu
       const size_t edgesPerGPU = (csr.nnz() + gpus.size() - 1) / gpus.size();
-      LOG(debug, "{}: {} edges per GPU", omp_get_thread_num(), edgesPerGPU);
+      LOG(debug, "omp thread {}: {} edges per GPU", omp_get_thread_num(),
+          edgesPerGPU);
 
       // launch counting operations
       const size_t edgeStart = edgesPerGPU * gpuIdx;
@@ -219,20 +226,17 @@ int main(int argc, char **argv) {
       counter.count_async(csr.view(), numEdges, edgeStart);
 
       // wait for counting operations to finish
-      LOG(debug, "{}: wait for counter on GPU {}", omp_get_thread_num(),
-          counter.device());
+      LOG(debug, "omp thread {}: wait for counter on GPU {}",
+          omp_get_thread_num(), counter.device());
       counter.sync();
       nvtxRangePop();
-      nvtxRangePush("red");
 #pragma omp atomic
       total += counter.count();
-      nvtxRangePop();
-
-      // elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
-      // LOG(info, "count time {}s", elapsed);
-      // LOG(info, "{} triangles ({} teps)", total, csr.nnz() / elapsed);
-      // times.push_back(elapsed);
-    }
+    } // gpus
+    elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
+    LOG(info, "hints/count time {}s", elapsed);
+    LOG(info, "{} triangles ({} teps)", total, csr.nnz() / elapsed);
+    times.push_back(elapsed);
     tris = total;
     nnz = csr.nnz();
 
