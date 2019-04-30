@@ -1,3 +1,10 @@
+/*!
+
+Count triangles using the per-edge linear search.
+Overlap IO and matrix construction with a queue of vectors of edges
+
+*/
+
 #include <fmt/format.h>
 #include <iostream>
 #include <map>
@@ -64,7 +71,8 @@ void consume(const int numa, BoundedBuffer<EDGE> &queue, Mat &mat) {
 
     for (const auto val : vals) {
       if (upperTriangular(val)) {
-        SPDLOG_TRACE(pangolin::logger::console, "{} {}", val.first, val.second);
+        SPDLOG_TRACE(pangolin::logger::console(), "{} {}", val.first,
+                     val.second);
         mat.add_next_edge(val);
       }
     }
@@ -83,6 +91,8 @@ void consume(const int numa, BoundedBuffer<EDGE> &queue, Mat &mat) {
   GPUs.
 */
 int main(int argc, char **argv) {
+
+  pangolin::init();
 
   typedef uint64_t Index64;
   typedef pangolin::EdgeTy<Index64> Edge64;
@@ -259,8 +269,12 @@ int main(int argc, char **argv) {
 
   for (auto &kv : NUMAToQueue) {
     auto &queue = kv.second;
-    assert(queue.closed());
-    assert(queue.empty());
+    if (!queue.closed()) {
+      LOG(error, "queue was not closed");
+    }
+    if (!queue.empty()) {
+      LOG(error, "queue w as not empty");
+    }
   }
 
   double elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;

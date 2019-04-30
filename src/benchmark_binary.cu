@@ -1,3 +1,9 @@
+/*!
+
+Count triangles using the per-edge binary search
+
+*/
+
 #include <fmt/format.h>
 #include <iostream>
 
@@ -8,6 +14,8 @@
 #include "pangolin/pangolin.hpp"
 
 int main(int argc, char **argv) {
+
+  pangolin::init();
 
   std::vector<int> gpus;
   std::string path;

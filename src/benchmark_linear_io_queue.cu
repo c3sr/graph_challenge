@@ -1,7 +1,7 @@
 /*!
 
 Count triangles using the linear search.
-Simultaneously read and build the GPU implementation.
+Simultaneously read and build the GPU implementation with a queue of edges.
 
 */
 
@@ -61,7 +61,8 @@ void consume(BoundedBuffer<EDGE> &queue, Mat &mat) {
 
     for (const auto val : vals) {
       if (upperTriangular(val)) {
-        SPDLOG_TRACE(pangolin::logger::console, "{} {}", val.first, val.second);
+        SPDLOG_TRACE(pangolin::logger::console(), "{} {}", val.first,
+                     val.second);
         mat.add_next_edge(val);
       }
     }
@@ -71,6 +72,8 @@ void consume(BoundedBuffer<EDGE> &queue, Mat &mat) {
 }
 
 int main(int argc, char **argv) {
+
+  pangolin::init();
 
   typedef uint64_t Index64;
   typedef pangolin::EdgeTy<Index64> Edge64;

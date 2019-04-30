@@ -19,6 +19,8 @@ Use one thread for each triangle counter through OpenMP.
 
 int main(int argc, char **argv) {
 
+  pangolin::init();
+
   pangolin::Config config;
 
   std::vector<int> gpus;
@@ -106,7 +108,7 @@ int main(int argc, char **argv) {
   }
 
   if (managed) {
-    SPDLOG_DEBUG(pangolin::logger::console, "managed memory supported");
+    LOG(debug, "managed memory supported");
   } else {
     LOG(warn, "managed memory not supported!");
   }

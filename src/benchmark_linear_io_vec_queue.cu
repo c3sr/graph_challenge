@@ -1,3 +1,10 @@
+/*!
+
+Count triangles using the per-edge linear search.
+Overlap IO and matrix construction with a queue of vectors of edges
+
+*/
+
 #include <fmt/format.h>
 #include <iostream>
 #include <mutex>
@@ -49,13 +56,13 @@ private:
   void advance_head() {
     head_ = (head_ + 1) % N;
     count_++;
-    SPDLOG_TRACE(pangolin::logger::console, "head -> {}, count={}", head_,
+    SPDLOG_TRACE(pangolin::logger::console(), "head -> {}, count={}", head_,
                  count_);
   }
   void advance_tail() {
     tail_ = (tail_ + 1) % N;
     count_--;
-    SPDLOG_TRACE(pangolin::logger::console, "tail -> {}, count={}", tail_,
+    SPDLOG_TRACE(pangolin::logger::console(), "tail -> {}, count={}", tail_,
                  count_);
   }
 };
@@ -158,12 +165,12 @@ private:
 
   void advance_head() {
     head_ = (head_ + 1) % BUF_SIZE;
-    SPDLOG_TRACE(pangolin::logger::console, "head -> {}, count={}", head_,
+    SPDLOG_TRACE(pangolin::logger::console(), "head -> {}, count={}", head_,
                  unsafe_count());
   }
   void advance_tail() {
     tail_ = (tail_ + 1) % BUF_SIZE;
-    SPDLOG_TRACE(pangolin::logger::console, "tail -> {}, count={}", tail_,
+    SPDLOG_TRACE(pangolin::logger::console(), "tail -> {}, count={}", tail_,
                  unsafe_count());
   }
 };
@@ -203,7 +210,7 @@ void consume(
       std::vector<EDGE> vals = queue.pop();
       for (auto &val : vals) {
         if (upperTriangular(val)) {
-          SPDLOG_TRACE(pangolin::logger::console, "{} {}", val.first,
+          SPDLOG_TRACE(pangolin::logger::console(), "{} {}", val.first,
                        val.second);
           mat.add_next_edge(val);
         }
@@ -216,7 +223,7 @@ void consume(
     std::vector<EDGE> vals = queue.pop();
     for (auto &val : vals) {
       if (upperTriangular(val)) {
-        SPDLOG_TRACE(pangolin::logger::console, "drain {} {}", val.first,
+        SPDLOG_TRACE(pangolin::logger::console(), "drain {} {}", val.first,
                      val.second);
         mat.add_next_edge(val);
       }
@@ -226,6 +233,8 @@ void consume(
 }
 
 int main(int argc, char **argv) {
+
+  pangolin::init();
 
   typedef uint64_t Index64;
   typedef pangolin::EdgeTy<Index64> Edge64;
