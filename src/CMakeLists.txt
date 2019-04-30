@@ -40,7 +40,6 @@ if (OpenMP_CXX_FOUND)
     set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler=${OpenMP_CXX_FLAGS}")
 endif()
 
-add_exe(NAME gc SRCS main.cu)
 add_exe(NAME benchmark-linear SRCS benchmark_linear.cu)
 add_exe(NAME bl2 SRCS benchmark_linear2.cu)
 add_exe(NAME bl3 SRCS benchmark_linear3.cu)
