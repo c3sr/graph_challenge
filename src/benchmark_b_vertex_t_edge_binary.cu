@@ -23,7 +23,7 @@ int main(int argc, char **argv) {
 
   std::vector<int> gpus;
   std::string path;
-  int coarsening = 1;
+  int rowCacheSz = 512;
   int iters = 1;
   bool help = false;
   bool debug = false;
@@ -39,8 +39,8 @@ int main(int argc, char **argv) {
   cli = cli |
         clara::Opt(verbose)["--verbose"]("print verbose messages to stderr");
   cli = cli | clara::Opt(gpus, "dev ids")["-g"]("gpus to use");
-  cli = cli | clara::Opt(coarsening,
-                         "coarsening")["-c"]("Number of elements per thread");
+  cli = cli |
+        clara::Opt(rowCacheSz, "INT")["-r"]("Size of shared-memory row cache");
   cli = cli | clara::Opt(readMostly)["--read-mostly"](
                   "mark data as read-mostly by all gpus before kernel");
   cli = cli | clara::Opt(accessedBy)["--accessed-by"](
@@ -172,7 +172,7 @@ int main(int argc, char **argv) {
     std::vector<pangolin::VertexBlockBinaryTC> counters;
     for (int dev : gpus) {
       LOG(debug, "create device {} counter", dev);
-      counters.push_back(pangolin::VertexBlockBinaryTC(dev));
+      counters.push_back(pangolin::VertexBlockBinaryTC(dev, rowCacheSz));
     }
 
     // determine the number of rows per GPU
