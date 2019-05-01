@@ -40,6 +40,7 @@ if (OpenMP_CXX_FOUND)
     set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler=${OpenMP_CXX_FLAGS}")
 endif()
 
+add_exe(NAME benchmark-b-vertex-t-edge-binary SRCS benchmark_b_vertex_t_edge_binary.cu)
 add_exe(NAME benchmark-binary SRCS benchmark_binary.cu)
 add_exe(NAME benchmark-linear-io-queue SRCS benchmark_linear_io_queue.cu)
 add_exe(NAME benchmark-linear-io-vec-queue SRCS benchmark_linear_io_vec_queue.cu)
