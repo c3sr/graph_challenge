@@ -14,6 +14,7 @@ HunterGate(
 )
 
 project(PangolinExample LANGUAGES CXX CUDA VERSION 0.1.0)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Set a default build type if none was specified
 set(default_build_type "Release")
