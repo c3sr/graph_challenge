@@ -1,4 +1,4 @@
-/*! Display system topology
+/*! Display pangolin's detected system topology
 
 */
 
@@ -62,13 +62,41 @@ int main(int argc, char **argv) {
   LOG(warn, "Not a release build");
 #endif
 
-  auto cpus = pangolin::topology::get_cpus();
+  pangolin::topology::Topology topology = pangolin::topology::topology();
 
-  for (const auto cpu : cpus) {
-    fmt::print(stdout, "cpu {}\n", cpu);
-    auto numas = pangolin::topology::cpu_numa_affinity({cpu});
-    for (const auto numa : numas) {
-      fmt::print(stdout, "\tnuma {}\n", numa);
+  // summarize NUMA regions
+  fmt::print(stdout, "NUMA regions\n");
+  if (topology.numas_.empty()) {
+    fmt::print(stdout, "  no NUMA regions detected");
+  } else {
+    for (const auto numaKv : topology.numas_) {
+      auto numa = numaKv.second;
+      fmt::print(stdout, "  numa {}\n", numa->id_);
+      for (const auto cpu : numa->cpus_) {
+        fmt::print(stdout, "    cpu {}\n", cpu->id_);
+      }
+      for (const auto gpu : numa->gpus_) {
+        fmt::print(stdout, "    gpu {}\n", gpu->cudaId_);
+      }
+    }
+  }
+
+  // summarize CPU->GPU affinity
+  fmt::print(stdout, "CPU->GPU affinity\n");
+  for (const auto cpuKv : topology.cpus_) {
+    auto cpu = cpuKv.second;
+    fmt::print(stdout, "  cpu {}\n", cpu->id_);
+    for (const auto gpu : cpu->gpus_) {
+      fmt::print(stdout, "    gpu {}\n", gpu->cudaId_);
+    }
+  }
+
+  fmt::print(stdout, "GPU->CPU affinity\n");
+  for (const auto gpuKv : topology.cudaGpus_) {
+    auto gpu = gpuKv.second;
+    fmt::print(stdout, "  gpu {}\n", gpu->cudaId_);
+    for (const auto cpu : gpu->cpus_) {
+      fmt::print(stdout, "    cpu {}\n", cpu->id_);
     }
   }
 
