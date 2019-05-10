@@ -359,7 +359,7 @@ int main(int argc, char **argv) {
       LOG(debug, "start async count on GPU {} ({} edges)", counter.device(),
           numEdges);
 
-      counter.count_async(csr.view(), numEdges, edgeStart);
+      counter.count_async(csr.view(), edgeStart, numEdges);
       edgeStart += edgesPerGPU;
     }
 

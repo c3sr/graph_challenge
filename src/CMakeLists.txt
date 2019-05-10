@@ -42,6 +42,7 @@ endif()
 
 add_exe(NAME 2dhist SRCS 2dhist.cu)
 add_exe(NAME benchmark-b-vertex-t-edge-binary SRCS benchmark_b_vertex_t_edge_binary.cu)
+add_exe(NAME benchmark-bs-vertex-t-edge-binary SRCS benchmark_bs_vertex_t_edge_binary.cu)
 add_exe(NAME benchmark-binary SRCS benchmark_binary.cu)
 add_exe(NAME benchmark-linear-io-queue SRCS benchmark_linear_io_queue.cu)
 add_exe(NAME benchmark-linear-io-vec-queue SRCS benchmark_linear_io_vec_queue.cu)
