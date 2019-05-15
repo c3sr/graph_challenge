@@ -102,14 +102,19 @@ int main(int argc, char **argv)
     LOG(info, "nnz = {}", coo.nnz());
     LOG(info, "create COO time {}s", elapsed);
 
-    pangolin::CrossDecomp<pangolin::COO<uint32_t>> CD;
+    pangolin::CrossDecomp<pangolin::COO<uint32_t>,4> CD;
+    // CD.CrossDecompInit(coo);
+    // CD.Host_evalEdges_sync(coo);
+    // // CD.Host_repartition_sync(true, 1, coo);
+    // CD.Host_repartition_sync(false, 1, coo);
+    // CD.Host_evalEdges_sync(coo);
 
-    CD.CrossDecompInit(coo);
-    CD.Host_evalEdges(coo);
-    // CD.Host_repartition(true, 1, coo);
-    CD.Host_repartition(false, 3, coo);
-    CD.Host_evalEdges(coo);
 
+    CD.CrossDecompInit(true, coo);
+    CD.Host_evalEdges_sync(coo);
+    // CD.Host_repartition_sync(true, 1, coo);
+    CD.Host_repartition_sync(true, 1, coo);
+    CD.Host_evalEdges_sync(coo);
 
     
 	return 0;
