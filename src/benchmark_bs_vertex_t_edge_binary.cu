@@ -118,6 +118,7 @@ int main(int argc, char **argv) {
   uint64_t tris;
   for (int i = 0; i < iters; ++i) {
     // create csr
+    nvtxRangePush("create csr");
     start = std::chrono::system_clock::now();
     auto upperTriangularFilter = [](pangolin::EdgeTy<uint64_t> e) {
       return e.first < e.second;
@@ -131,8 +132,9 @@ int main(int argc, char **argv) {
                    : pangolin::CSR<uint64_t>::from_edges(
                          edges.begin(), edges.end(), lowerTriangularFilter);
 
-    LOG(debug, "nnz = {}", csr.nnz());
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
+    nvtxRangePop(); // create csr
+    LOG(debug, "nnz = {}", csr.nnz());
     LOG(info, "create CSR time {}s", elapsed);
 
     // read-mostly
@@ -150,6 +152,7 @@ int main(int argc, char **argv) {
     LOG(info, "read-mostly CSR time {}s", elapsed);
 
     // accessed-by
+    nvtxRangePush("accessed-by");
     start = std::chrono::system_clock::now();
     if (accessedBy) {
       for (const auto &gpu : gpus) {
@@ -159,9 +162,11 @@ int main(int argc, char **argv) {
       }
     }
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
+    nvtxRangePop();
     LOG(info, "accessed-by CSR time {}s", elapsed);
 
     // prefetch
+    nvtxRangePush("prefetch");
     start = std::chrono::system_clock::now();
     if (prefetchAsync) {
       for (const auto &gpu : gpus) {
@@ -171,9 +176,11 @@ int main(int argc, char **argv) {
       }
     }
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
+    nvtxRangePop();
     LOG(info, "prefetch CSR time {}s", elapsed);
 
     // count triangles
+    nvtxRangePush("count");
     start = std::chrono::system_clock::now();
 
     // create async counters
@@ -183,6 +190,9 @@ int main(int argc, char **argv) {
       counters.push_back(pangolin::VertexBlocksBinaryTC(dev, rowCacheSz));
     }
 
+    elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
+    LOG(info, "ctor time {}s", elapsed);
+
     // determine the number of rows per GPU
     const size_t rowsPerGPU = (csr.num_rows() + gpus.size() - 1) / gpus.size();
     LOG(debug, "{} rows per GPU", rowsPerGPU);
@@ -190,13 +200,16 @@ int main(int argc, char **argv) {
     // launch counting operations
     size_t rowStart = 0;
     for (auto &counter : counters) {
-      const size_t rowStop = std::min(rowStart + rowsPerGPU, csr.nnz());
+      const size_t rowStop = std::min(rowStart + rowsPerGPU, csr.num_rows());
       const size_t numRows = rowStop - rowStart;
       LOG(debug, "start async count on GPU {} ({} rows)", counter.device(),
           numRows);
       counter.count_async(csr.view(), rowStart, numRows);
       rowStart += rowsPerGPU;
     }
+
+    elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
+    LOG(info, "launch time {}s", elapsed);
 
     // wait for counting operations to finish
     uint64_t total = 0;
@@ -207,6 +220,7 @@ int main(int argc, char **argv) {
     }
 
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
+    nvtxRangePop(); // count
     LOG(info, "count time {}s", elapsed);
     LOG(info, "{} triangles ({} teps)", total, csr.nnz() / elapsed);
     times.push_back(elapsed);
