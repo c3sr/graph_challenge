@@ -223,9 +223,9 @@ int main(int argc, char **argv) {
       const size_t edgeStart = edgesPerGPU * gpuIdx;
       const size_t edgeStop = std::min(edgeStart + edgesPerGPU, csr.nnz());
       const size_t numEdges = edgeStop - edgeStart;
-      LOG(debug, "start async count on GPU {} ({} edges)", counter.device(),
+      LOG(debug, "omp thread {}: start async count on GPU {} ({} edges)", omp_get_thread_num(), counter.device(),
           numEdges);
-      counter.count_async(csr.view(), numEdges, edgeStart);
+      counter.count_async(csr.view(), edgeStart, numEdges);
 
       // wait for counting operations to finish
       LOG(debug, "omp thread {}: wait for counter on GPU {}",
@@ -236,7 +236,7 @@ int main(int argc, char **argv) {
       total += counter.count();
     } // gpus
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
-    LOG(info, "hints/count time {}s", elapsed);
+    LOG(info, "prefetch/count time {}s", elapsed);
     LOG(info, "{} triangles ({} teps)", total, csr.nnz() / elapsed);
     times.push_back(elapsed);
     tris = total;
