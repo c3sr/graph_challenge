@@ -96,21 +96,68 @@ int main(int argc, char **argv) {
 
   // Check for unified memory support
   bool managed = true;
-  cudaDeviceProp prop;
-  for (auto gpu : gpus) {
-    CUDA_RUNTIME(cudaGetDeviceProperties(&prop, gpu));
-    // We check for concurrentManagedAccess, as devices with only the
-    // managedAccess property have extra synchronization requirements.
-    if (!prop.concurrentManagedAccess) {
-      LOG(warn, "device {} does not support concurrentManagedAccess", gpu);
+  {
+    cudaDeviceProp prop;
+    for (auto gpu : gpus) {
+      CUDA_RUNTIME(cudaGetDeviceProperties(&prop, gpu));
+      // We check for concurrentManagedAccess, as devices with only the
+      // managedAccess property have extra synchronization requirements.
+      if (!prop.concurrentManagedAccess) {
+        LOG(warn, "device {} does not support concurrentManagedAccess", gpu);
+      }
+      managed = managed && prop.concurrentManagedAccess;
     }
-    managed = managed && prop.concurrentManagedAccess;
+
+    if (managed) {
+      LOG(debug, "managed memory supported");
+    } else {
+      LOG(warn, "managed memory not supported!");
+    }
   }
 
-  if (managed) {
-    LOG(debug, "managed memory supported");
+  // Check host page tables for pagable memory access
+  bool hostPageTables = false;
+  {
+    cudaDeviceProp prop;
+    for (auto gpu : gpus) {
+      CUDA_RUNTIME(cudaGetDeviceProperties(&prop, gpu));
+      // if non-zero, setAccessedBy has no effect
+      if (prop.pageableMemoryAccessUsesHostPageTables) {
+        LOG(warn, "device {} uses host page takes for pageable memory accesses",
+            gpu);
+      }
+      hostPageTables =
+          hostPageTables && prop.pageableMemoryAccessUsesHostPageTables;
+    }
+  }
+
+  if (hostPageTables) {
+    LOG(warn, "at least one device used host page tables (accessed-by has no "
+              "effect, read-only pages not created on access)");
   } else {
-    LOG(warn, "managed memory not supported!");
+    LOG(debug, "no devices use host page tables");
+  }
+
+  // Check for concurrent managed access
+  bool concurrentManagedAccess = false;
+  {
+    cudaDeviceProp prop;
+    for (auto gpu : gpus) {
+      CUDA_RUNTIME(cudaGetDeviceProperties(&prop, gpu));
+      // if non-zero, setAccessedBy has no effect
+      if (!prop.concurrentManagedAccess) {
+        LOG(warn, "device {} does not support concurrent managed access", gpu);
+      }
+      concurrentManagedAccess =
+          concurrentManagedAccess && prop.concurrentManagedAccess;
+    }
+  }
+
+  if (!concurrentManagedAccess) {
+    LOG(warn, "at least one device does not support concurrent managed access. "
+              "read-duplicate may not occur");
+  } else {
+    LOG(debug, "all devices support concurrent managed access");
   }
 
   // set up GPUs
@@ -165,6 +212,19 @@ int main(int argc, char **argv) {
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
     LOG(info, "create CSR time {}s", elapsed);
 
+    // accessed-by
+    nvtxRangePush("accessed-by");
+    start = std::chrono::system_clock::now();
+    if (accessedBy) {
+      for (const auto &gpu : gpus) {
+        LOG(debug, "mark CSR accessed-by {}", gpu);
+        csr.accessed_by(gpu);
+      }
+    }
+    elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
+    nvtxRangePop();
+    LOG(info, "accessed-by CSR time {}s", elapsed);
+
     // read-mostly
     nvtxRangePush("read-mostly");
     start = std::chrono::system_clock::now();
@@ -174,18 +234,6 @@ int main(int argc, char **argv) {
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
     nvtxRangePop();
     LOG(info, "read-mostly CSR time {}s", elapsed);
-
-    // accessed-by
-    nvtxRangePush("accessed-by");
-    start = std::chrono::system_clock::now();
-    if (accessedBy) {
-      for (const auto &gpu : gpus) {
-        csr.accessed_by(gpu);
-      }
-    }
-    elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
-    nvtxRangePop();
-    LOG(info, "accessed-by CSR time {}s", elapsed);
 
     uint64_t total = 0; // total triangle count
 
@@ -223,8 +271,8 @@ int main(int argc, char **argv) {
       const size_t edgeStart = edgesPerGPU * gpuIdx;
       const size_t edgeStop = std::min(edgeStart + edgesPerGPU, csr.nnz());
       const size_t numEdges = edgeStop - edgeStart;
-      LOG(debug, "omp thread {}: start async count on GPU {} ({} edges)", omp_get_thread_num(), counter.device(),
-          numEdges);
+      LOG(debug, "omp thread {}: start async count on GPU {} ({} edges)",
+          omp_get_thread_num(), counter.device(), numEdges);
       counter.count_async(csr.view(), edgeStart, numEdges);
 
       // wait for counting operations to finish
