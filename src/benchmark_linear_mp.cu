@@ -109,9 +109,11 @@ int main(int argc, char **argv) {
     }
 
     if (managed) {
-      LOG(debug, "managed memory supported");
+      LOG(debug, "all devices support concurrent managed access");
     } else {
-      LOG(warn, "managed memory not supported!");
+      LOG(warn,
+          "at least one device does not support concurrent managed access. "
+          "read-duplicate may not occur");
     }
   }
 
@@ -127,7 +129,7 @@ int main(int argc, char **argv) {
             gpu);
       }
       hostPageTables =
-          hostPageTables && prop.pageableMemoryAccessUsesHostPageTables;
+          hostPageTables || prop.pageableMemoryAccessUsesHostPageTables;
     }
   }
 
@@ -136,28 +138,6 @@ int main(int argc, char **argv) {
               "effect, read-only pages not created on access)");
   } else {
     LOG(debug, "no devices use host page tables");
-  }
-
-  // Check for concurrent managed access
-  bool concurrentManagedAccess = false;
-  {
-    cudaDeviceProp prop;
-    for (auto gpu : gpus) {
-      CUDA_RUNTIME(cudaGetDeviceProperties(&prop, gpu));
-      // if non-zero, setAccessedBy has no effect
-      if (!prop.concurrentManagedAccess) {
-        LOG(warn, "device {} does not support concurrent managed access", gpu);
-      }
-      concurrentManagedAccess =
-          concurrentManagedAccess && prop.concurrentManagedAccess;
-    }
-  }
-
-  if (!concurrentManagedAccess) {
-    LOG(warn, "at least one device does not support concurrent managed access. "
-              "read-duplicate may not occur");
-  } else {
-    LOG(debug, "all devices support concurrent managed access");
   }
 
   // set up GPUs
