@@ -12,9 +12,7 @@
 #include "pangolin/pangolin.hpp"
 #include "pangolin/algorithm/zero.cuh"
 
-
 #define UT uint32_t
-
 
 int getMaxK(std::map<UT, int> degree)
 {
@@ -37,8 +35,320 @@ int getMaxK(std::map<UT, int> degree)
 	}
 
 	return maxK;
-
 }
+
+
+int ktruss_by_k(std::vector<int> gpus,
+  int numEdges,
+  int edgesPerGPU,
+  const pangolin::COO<UT> &csr,
+  std::map<UT, int> degree
+  )
+{
+  std::vector<pangolin::MultiGPU_Ktruss_Binary> trussCounters;
+  pangolin::Vector<UT> uSrcKp(numEdges);
+  
+  // create async counters
+  size_t edgeStart = 0;
+  for (int dev : gpus) {
+    LOG(info, "create device {} counter", dev);
+    auto counter = pangolin::MultiGPU_Ktruss_Binary(numEdges, dev);
+    counter.CreateWorkspace(numEdges);
+    trussCounters.push_back(counter);
+    counter.InitializeWorkSpace_async(csr.view(), numEdges);
+
+    const size_t edgeStop = std::min(edgeStart + edgesPerGPU, csr.nnz());
+    const size_t edgesToProcess = edgeStop - edgeStart;
+    counter.Inialize_SrcKp_async(edgeStart, edgesToProcess, uSrcKp.data());
+    edgeStart += edgesPerGPU;
+  }
+
+  uSrcKp.read_mostly();
+ 
+  int kmin = 3;
+  int kmax = getMaxK(degree);
+  //Attempt different k to bound kmin and kmax
+  printf("# GPUs=%d\n", gpus.size());
+
+  int newKmin = kmin, newKmax=kmax;
+  int factor = 1;
+  while(kmax-kmin > 1)
+  {
+    //printf("New Kmin = %d, New Kmax=%d\n", kmin, kmax);
+
+    int reqGPUs = (kmax - kmin) > gpus.size()? gpus.size(): (kmax-kmin-1);
+
+    int step = (kmax/factor-kmin)/(reqGPUs + 1);
+    factor=1;
+    size_t edgeStart = 0;
+    int gCount = 1;
+
+   
+    constexpr int dimBlock = 32; //For edges and nodes
+    int dimGridEdges = (numEdges + dimBlock - 1) / dimBlock;
+    UT numDeleted = 0;
+    bool firstTry = true;
+    
+    for (auto &counter : trussCounters) 
+     {
+       counter.setDevice();
+       counter.hnumaffected[0] = 1;
+       CUDA_RUNTIME(cudaMemsetAsync(counter.gnumaffected,0,sizeof(UT),counter.stream()));
+       counter.selectedOut[0] = numEdges;
+     }
+
+    bool assumpAffected = true;
+    dimGridEdges =  (trussCounters[0].selectedOut[0] + dimBlock - 1) / dimBlock;
+    
+    while(assumpAffected)
+    {
+      assumpAffected = false;
+      for (int i=0; i<reqGPUs;i++) 
+      { 
+        auto& counter = trussCounters[i];
+        counter.setDevice();
+        if(counter.hnumaffected[0]>0)
+        {
+          //printf("GPU=%d, k=%d\n", counter.device(), kmin+(i+1)*step);
+          core_binary_indirect<dimBlock><<<dimGridEdges,dimBlock,0,counter.stream()>>>(counter.gDstKP, counter.gnumdeleted, 
+            counter.gnumaffected, kmin + (i+1)*step, 0, counter.selectedOut[0],
+            csr.view(), counter.gKeep, counter.gAffected, counter.gReveresed, firstTry, 2);
+
+          //Copy to host
+          CUDA_RUNTIME(cudaMemcpyAsync(counter.hnumaffected, counter.gnumaffected, sizeof(UT), cudaMemcpyDeviceToHost, counter.stream()));
+          CUDA_RUNTIME(cudaMemcpyAsync(counter.hnumdeleted, counter.gnumdeleted, sizeof(UT), cudaMemcpyDeviceToHost, counter.stream()));
+
+          //Set gpu data to zeros
+          CUDA_RUNTIME(cudaMemsetAsync(counter.gnumdeleted,0,sizeof(UT),counter.stream()));
+          CUDA_RUNTIME(cudaMemsetAsync(counter.gnumaffected,0,sizeof(UT),counter.stream()));
+        }
+      }
+
+      for (int i=0; i<reqGPUs;i++) 
+      { 
+        auto& counter = trussCounters[i];
+        counter.setDevice();
+        counter.sync();
+        //printf("GPU=%d, Affected=%d, deleted=%d\n", counter.device(), counter.hnumaffected[0], counter.hnumdeleted[0]);
+        assumpAffected = assumpAffected || (counter.hnumaffected[0]>0);
+        counter.percentage_deleted_k = (counter.hnumdeleted[0])*1.0/numEdges;
+      }
+      firstTry = false;
+    }
+   
+    gCount = 1;
+    float prevPerc = 0;
+    int fallBackGPU = -1;
+    for (int i=0; i<reqGPUs;i++) 
+    { 
+      auto& counter = trussCounters[i];
+      counter.setDevice();
+
+      float perc = counter.perc_del_k();
+      if(perc<1.0)
+      {
+          newKmin = kmin + gCount*step;
+          fallBackGPU = gCount-1;
+      }
+      
+      if(perc==1.0f && prevPerc != 1.0)
+      {
+        newKmax = kmin + gCount*step;
+      }
+
+      prevPerc = perc;
+      gCount++;
+    }
+
+
+    for (int i=0; i<reqGPUs;i++) 
+    { 
+      auto& counter = trussCounters[i];
+      counter.setDevice();
+      if(fallBackGPU == -1)
+      {
+        counter.rewind_async(numEdges);
+      }
+      else if(fallBackGPU != counter.device())
+      {
+        counter.store_async(numEdges, trussCounters[fallBackGPU].gKeep);
+      }
+      else
+      {
+        counter.store_async(numEdges);
+      }
+    }
+
+
+    for(int i=0; i<reqGPUs; i++)
+    {
+      auto& counter = trussCounters[i];
+      counter.setDevice();
+      counter.compact(numEdges, uSrcKp.data());
+      //counter.sync();
+      //printf("%d, ", counter.selectedOut[0]);
+    }
+    kmin = newKmin;
+    kmax = newKmax;
+  }
+
+  //printf("New Kmin = %d, New Kmax=%d\n", newKmin, newKmax);
+  for (auto &counter : trussCounters)
+    counter.free();
+
+
+  return kmin;
+}
+
+
+int ktruss_by_data(std::vector<int> gpus,
+  int numEdges,
+  int edgesPerGPU,
+  const pangolin::COO<UT> &csr,
+  std::map<UT, int> degree
+  )
+  {
+    std::vector<pangolin::MultiGPU_Ktruss_Binary> trussCounters;
+    constexpr int dimBlock = 32; //For edges and nodes
+    int dimGridEdges = (numEdges + dimBlock - 1) / dimBlock;
+      
+    //Initialize
+    pangolin::Vector<bool> uKeep(numEdges);
+    pangolin::Vector<bool> uPrevKeep(numEdges);
+    pangolin::Vector<bool> uAffected(numEdges);
+    bool assumpAffected=true;
+
+    pangolin::Vector<UT> uReversed(numEdges);
+    pangolin::Vector<UT> uSrcKP(numEdges);
+    pangolin::Vector<UT> uDstKP(numEdges);
+    
+    LOG(info, "{} edges per GPU", edgesPerGPU);
+    
+    // create async counters
+    size_t edgeStart = 0;
+    for (int dev : gpus) {
+      LOG(info, "create device {} counter", dev);
+      auto counter = pangolin::MultiGPU_Ktruss_Binary(numEdges, dev);
+      trussCounters.push_back(counter);
+      const size_t edgeStop = std::min(edgeStart + edgesPerGPU, csr.nnz());
+      const size_t edgesToProcess = edgeStop - edgeStart;
+      counter.InitializeArrays_u_async(edgeStart, edgesToProcess, csr.view(), uKeep.data(), 
+        uAffected.data(), uReversed.data(), uPrevKeep.data(), uSrcKP.data(), uDstKP.data());
+      edgeStart += edgesPerGPU;
+    }
+
+    uReversed.read_mostly();
+    uSrcKP.read_mostly();
+
+
+    //Ktruss
+    int kmin = 3;
+    int kmax = getMaxK(degree);
+    //Attempt different k to bound kmin and kmax
+    printf("# GPUs=%d\n", gpus.size());
+
+    UT k;
+		int originalKmin = kmin;
+		int originalKmax = kmax;
+    bool cond = kmax - kmin > 1;
+    float minPercentage = 0.5;
+    bool firstTry=true;
+    UT numDeleted=0;
+    float percDeleted = 0;
+    int uMax=1;
+    while (cond)
+		{
+
+      k =  kmin*minPercentage + kmax*(1-minPercentage);
+      printf("Kmin=%d, kmax=%d, k=%d\n", kmin, kmax, k);
+
+      firstTry = true;
+      assumpAffected = true;
+		
+      while(assumpAffected)
+      {
+        assumpAffected = false;
+        size_t edgeStart = 0;
+        for (auto &counter : trussCounters) 
+        {
+          counter.setDevice();
+          const size_t edgeStop = std::min(edgeStart + edgesPerGPU, csr.nnz());
+          const size_t edgesToProcess = edgeStop - edgeStart;
+          LOG(info, "start async count on GPU {} ({} edges) k = {}", counter.device(),
+            edgesToProcess, k);
+          core_binary_direct<dimBlock><<<dimGridEdges,dimBlock,0,counter.stream()>>>(counter.gnumdeleted, 
+              counter.gnumaffected, k, edgeStart, edgesToProcess,
+              csr.view(), uKeep.data(), uAffected.data(), uReversed.data(), firstTry, uMax);
+          
+          //Copy to host
+          CUDA_RUNTIME(cudaMemcpyAsync(counter.hnumaffected, counter.gnumaffected, sizeof(UT), cudaMemcpyDeviceToHost, counter.stream()));
+          CUDA_RUNTIME(cudaMemcpyAsync(counter.hnumdeleted, counter.gnumdeleted, sizeof(UT), cudaMemcpyDeviceToHost, counter.stream()));
+
+          //Set gpu data to zeros
+          CUDA_RUNTIME(cudaMemsetAsync(counter.gnumdeleted,0,sizeof(UT),counter.stream()));
+          CUDA_RUNTIME(cudaMemsetAsync(counter.gnumaffected,0,sizeof(UT),counter.stream()));
+  
+          edgeStart += edgesPerGPU;
+        }
+
+        numDeleted = 0;
+        for (int i=0; i<gpus.size();i++) 
+        { 
+          auto& counter = trussCounters[i];
+          counter.setDevice();
+          counter.sync();
+          numDeleted += counter.hnumdeleted[0];
+          //printf("GPU=%d, Affected=%d, deleted=%d\n", counter.device(), counter.hnumaffected[0], counter.hnumdeleted[0]);
+          assumpAffected = assumpAffected || (counter.hnumaffected[0]>0);
+        }
+        percDeleted = (numDeleted)*1.0/numEdges;
+        firstTry = false;
+      }
+   
+      if(percDeleted<1.0)
+      {
+          kmin = k;
+
+        size_t edgeStart = 0;
+        for (auto &counter : trussCounters) 
+        {
+          counter.setDevice();
+          const size_t edgeStop = std::min(edgeStart + edgesPerGPU, csr.nnz());
+          const size_t edgesToProcess = edgeStop - edgeStart;
+
+          Store<dimBlock><<<dimGridEdges, dimBlock, 0, counter.stream()>>>(edgeStart, edgesToProcess, uKeep.data(), uPrevKeep.data());
+          edgeStart += edgesPerGPU;
+        }
+      }
+      else
+      {
+        kmax = k;
+        size_t edgeStart = 0;
+        for (auto &counter : trussCounters) 
+        {
+          counter.setDevice();
+          const size_t edgeStop = std::min(edgeStart + edgesPerGPU, csr.nnz());
+          const size_t edgesToProcess = edgeStop - edgeStart;
+
+          Rewind<dimBlock><<<dimGridEdges, dimBlock, 0, counter.stream()>>>(edgeStart, edgesToProcess, uKeep.data(), uPrevKeep.data());
+          edgeStart += edgesPerGPU;
+        }
+
+        
+      }
+
+      for (auto &counter : trussCounters) 
+      {
+        counter.setDevice();
+        counter.sync();
+      }
+      
+      cond = kmax - kmin > 1;
+    }
+	  k= numDeleted==numEdges? k-1:k;
+    return k;
+}
+
 
 
 int main(int argc, char **argv) {
@@ -196,6 +506,7 @@ int main(int argc, char **argv) {
     //start = std::chrono::system_clock::now();
 
     //Find Kmax
+    //This is part of file reading
     std::map<UT, int> degree;
     for (int i = 0; i < csr.num_rows(); i++)
     {
@@ -208,292 +519,17 @@ int main(int argc, char **argv) {
       degree[end - start]++;
     }
 
-    
-
     start = std::chrono::system_clock::now();
-
+    csr.read_mostly();
     int numEdges = csr.nnz();
-    // create async counters
-    std::vector<pangolin::MultiGPU_Ktruss_Binary> trussCounters;
-    for (int dev : gpus) {
-      LOG(info, "create device {} counter", dev);
-      auto counter = pangolin::MultiGPU_Ktruss_Binary(numEdges, dev);
-      trussCounters.push_back(counter);
-      counter.InitializeWorkSpace_async(csr.view(), numEdges);
-    }
-   
-    int kmin = 3;
-    int kmax = getMaxK(degree);
-    //Attempt different k to bound kmin and kmax
-    printf("# GPUs=%d\n", gpus.size());
-
-    int newKmin = kmin, newKmax=kmax;
-    int factor = 2;
-    while(kmax-kmin > gpus.size())
-    {
-      int step = (kmax/factor-kmin)/(gpus.size() + 1);
-      factor=1;
-      size_t edgeStart = 0;
-      int gCount = 1;
-
-     
-      constexpr int dimBlock = 32; //For edges and nodes
-      int dimGridEdges = (numEdges + dimBlock - 1) / dimBlock;
-      UT numDeleted = 0;
-      bool firstTry = true;
-      
-      for (auto &counter : trussCounters) 
-       {
-         counter.setDevice();
-         counter.hnumaffected[0] = 1;
-         CUDA_RUNTIME(cudaMemsetAsync(counter.gnumaffected,0,sizeof(UT),counter.stream()));
-       }
-
-      bool assumpAffected = true;
-      dimGridEdges =  (numEdges + dimBlock - 1) / dimBlock;
-      
-      while(assumpAffected)
-      {
-        assumpAffected = false;
-        for (int i=0; i<gpus.size();i++) 
-        { 
-          auto& counter = trussCounters[i];
-          counter.setDevice();
-          //if(counter.hnumaffected[0]>0)
-          {
-
-            //printf("GPU=%d, k=%d\n", i+2, kmin+(i+1)*step);
-            core_binary_direct<dimBlock><<<dimGridEdges,dimBlock,0,counter.stream()>>>(counter.gnumdeleted, 
-              counter.gnumaffected, kmin + (i+1)*step, 0, numEdges,
-              csr.view(), counter.gKeep, counter.gAffected, counter.gReveresed, firstTry, 4); //<Tunable: 4>
-
-            //Copy to host
-            CUDA_RUNTIME(cudaMemcpyAsync(counter.hnumaffected, counter.gnumaffected, sizeof(UT), cudaMemcpyDeviceToHost, counter.stream()));
-            CUDA_RUNTIME(cudaMemcpyAsync(counter.hnumdeleted, counter.gnumdeleted, sizeof(UT), cudaMemcpyDeviceToHost, counter.stream()));
-
-            //Set gpu data to zeros
-           // CUDA_RUNTIME(cudaMemsetAsync(counter.gnumdeleted,0,sizeof(UT),counter.stream()));
-            //CUDA_RUNTIME(cudaMemsetAsync(counter.gnumaffected,0,sizeof(UT),counter.stream()));
-            
-            counter.zero();
-          
-
-          }
-        }
-
-        for (auto &counter : trussCounters) 
-        {
-          counter.setDevice();
-          counter.sync();
-
-
-          //printf("GPU=%d, Affected=%d, deleted=%d\n", counter.device(), counter.hnumaffected[0], counter.hnumdeleted[0]);
-          assumpAffected = assumpAffected || (counter.hnumaffected[0]>0);
-          counter.percentage_deleted_k = (counter.hnumdeleted[0])*1.0/numEdges;
-
-        }
-
-          firstTry = false;
-          
-      
-      }
-     
-      gCount = 1;
-      float prevPerc = 0;
-      for (auto &counter : trussCounters) 
-      {
-        counter.setDevice();
-        counter.sync();
-
-        float perc = counter.perc_del_k();
-        //deletePercentage.push_back(perc);
-        //printf("Percentage = %f\n", perc);
-
-        if(perc<1.0)
-        {
-            newKmin = kmin + gCount*step;
-
-            //Store for this gpu: as a begining
-            counter.store_async(numEdges);
-        }
-        else
-        {
-          counter.rewind_async(numEdges);
-        }
-        
-        if(perc==1.0f && prevPerc != 1.0)
-        {
-          newKmax = kmin + gCount*step;
-        }
-
-        prevPerc = perc;
-        gCount++;
-      }
-
-      kmin = newKmin;
-      kmax = newKmax;
-     //printf("New Kmin = %d, New Kmax=%d\n", newKmin, newKmax);
-  }
-
-  printf("New Kmin = %d, New Kmax=%d\n", newKmin, newKmax);
-
-/*
-
-
-
-    printf("New Kmin = %d, New Kmax=%d\n", newKmin, newKmax);
-
-    kmin=newKmin;
-    kmax=newKmax;
-
-    //Real Deal: Ktruss
-   
     const size_t edgesPerGPU = (csr.nnz() + gpus.size() - 1) / gpus.size();
-    LOG(info, "{} edges per GPU", edgesPerGPU);
-    
-    edgeStart = 0;
-    for (auto &counter : trussCounters) 
-    { 
-      const size_t edgeStop = std::min(edgeStart + edgesPerGPU, csr.nnz());
-      const size_t edgesToProcess = edgeStop - edgeStart;
-      //counter.InitializeArrays_async(edgeStart, edgesToProcess, csr.view(), mKeep.data(), mAffected.data(), mReversed.data(), mPrevKeep.data(), mSrcKP.data(), mDestKP.data());
-      counter.InitializeWorkSpace_async(csr.view(), numEdges);
-      edgeStart += edgesPerGPU;
-
-      printf("Inialized Part on input\n");
-    }
-    for (auto &counter : trussCounters) 
-    {
-      counter.sync();
-    }
-
-
-    printf("Let us start ktruss\n");
-
-    UT k;
-		int originalKmin = kmin;
-		int originalKmax = kmax;
-    bool cond = kmax - kmin > 1;
-    float minPercentage = 0.5;
-    bool firstTry=true;
-    UT numDeleted=0;
-    bool stillAffected = true;
-    float percDeleted = 0;
-    int uMax=2;
-    while (cond)
-		{
-			k =  kmin*minPercentage + kmax*(1-minPercentage);
-      firstTry = true;
-      numDeleted = 0;
-      stillAffected = true;
-		
-      while(stillAffected)
-      {
-        stillAffected = false;
-        numDeleted = 0;
-        size_t edgeStart = 0;
-        int gc = 0;
-        for (auto &counter : trussCounters) {
-          const size_t edgeStop = std::min(edgeStart + edgesPerGPU, csr.nnz());
-          const size_t edgesToProcess = edgeStop - edgeStart;
-          LOG(info, "start async count on GPU {} ({} edges) k = {}", counter.device(),
-            edgesToProcess, k);
-          counter.core_gpu_async(
-            mDestKP.data(),
-            k,  
-            edgeStart,
-            edgesToProcess, 
-            csr.view(), 
-            mReversed.data(), 
-            firstTry, 
-            uMax);
-
-          edgeStart += edgesPerGPU;
-          gc++;
-        }
-        for (auto &counter : trussCounters) 
-        {
-          counter.sync();
-          
-          UT ndel = counter.numDeleted();
-          UT naff = counter.numAffected();
-          numDeleted += ndel;
-          if(naff>0)
-            stillAffected = true;
-
-          printf("%d, %d\n", ndel, naff);
-        }
-        //CPU data movements
-        omp_set_num_threads(152);
-        #pragma omp parallel for
-        for(int i=0; i<numEdges; i++)
-        {
-          bool finalKeep = true;
-          bool finalAffected = false;
-          for (auto &counter : trussCounters)
-          {
-            finalKeep = finalKeep && counter.gKeep[i];
-            finalAffected = finalAffected || counter.gAffected[i];
-          }
-
-          for (auto &counter : trussCounters)
-          {
-            counter.gKeep[i] = finalKeep;
-            counter.gAffected[i] = finalAffected;
-          }
-        }
-  
-          //////////
-
-
-        //Copy Effects
-
-
-        firstTry = false;
-      }
-
-
-      percDeleted= (numDeleted)*1.0/numEdges;
-      printf("Exited inner loop, Precentage Deleted at k=%d equals %f\n", k, percDeleted);
-      break; 
-
-
-
-
-
-
-
-			cond = kmax - kmin > 1;
-		}
-
-		k= k= numDeleted==numDeleted? k-1:k;
-
-
-
-    /*size_t edgeStart = 0;
-    for (auto &counter : trussCounters) {
-      const size_t edgeStop = std::min(edgeStart + edgesPerGPU, csr.nnz());
-      const size_t numEdges = edgeStop - edgeStart;
-      LOG(debug, "start async count on GPU {} ({} edges)", counter.device(),
-          numEdges);
-      counter.findKtrussBinary_async(3, maxK, csr.view(), csr.num_rows(), numEdges,0,edgeStart);
-      edgeStart += edgesPerGPU;
-    }*/
-
-
-   
-    // wait for counting operations to finish
-    /*uint64_t total = 0;
-    for (auto &counter : counters) {
-      LOG(debug, "wait for counter on GPU {}", counter.device());
-      counter.sync();
-      total += counter.count();
-    }*/
+    //int k = ktruss_by_k(gpus, numEdges, edgesPerGPU, csr, degree);
+    int k = ktruss_by_data(gpus, numEdges, edgesPerGPU, csr, degree);
 
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
     nvtxRangePop();
     LOG(info, "count time {}s", elapsed);
-    //LOG(info, "MOHA {} ktruss ({} teps)", total, csr.nnz() / elapsed);
+    LOG(info, "MOHA {} ktruss ({} teps)", k, csr.nnz() / elapsed);
     times.push_back(elapsed);
     //tris = total;
     nnz = csr.nnz();

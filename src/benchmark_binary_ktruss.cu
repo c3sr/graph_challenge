@@ -39,6 +39,8 @@ int getMaxK(std::map<UT, int> degree)
 
 int main(int argc, char **argv) {
 
+
+  pangolin::init(); 
   pangolin::Config config;
 
   std::vector<int> gpus;
@@ -204,7 +206,7 @@ int main(int argc, char **argv) {
     std::vector<pangolin::SingleGPU_Ktruss_Binary> counters;
     for (int dev : gpus) {
       LOG(debug, "create device {} counter", dev);
-      counters.push_back(pangolin::SingleGPU_Ktruss_Binary(dev));
+      counters.push_back(pangolin::SingleGPU_Ktruss_Binary(csr.nnz() ,dev));
     }
 
     // determine the number of edges per gpu
