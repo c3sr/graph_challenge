@@ -1,6 +1,10 @@
 /*!
 
-Count triangles using the per-edge binary search
+b_vertex_t_edge_binary
+
+One thread-block per src
+One thread per src-dst edge
+Binary search of dst neighbor list into src list
 
 */
 
@@ -19,7 +23,7 @@ int main(int argc, char **argv) {
 
   std::vector<int> gpus;
   std::string path;
-  int coarsening = 1;
+  int rowCacheSz = 512;
   int iters = 1;
   bool help = false;
   bool debug = false;
@@ -35,8 +39,8 @@ int main(int argc, char **argv) {
   cli = cli |
         clara::Opt(verbose)["--verbose"]("print verbose messages to stderr");
   cli = cli | clara::Opt(gpus, "dev ids")["-g"]("gpus to use");
-  cli = cli | clara::Opt(coarsening,
-                         "coarsening")["-c"]("Number of elements per thread");
+  cli = cli |
+        clara::Opt(rowCacheSz, "INT")["-r"]("Size of shared-memory row cache");
   cli = cli | clara::Opt(readMostly)["--read-mostly"](
                   "mark data as read-mostly by all gpus before kernel");
   cli = cli | clara::Opt(accessedBy)["--accessed-by"](
@@ -117,7 +121,7 @@ int main(int argc, char **argv) {
     auto lowerTriangularFilter = [](pangolin::EdgeTy<uint64_t> e) {
       return e.first > e.second;
     };
-    auto csr = pangolin::COO<uint64_t>::from_edges(edges.begin(), edges.end(),
+    auto csr = pangolin::CSR<uint64_t>::from_edges(edges.begin(), edges.end(),
                                                    upperTriangularFilter);
     LOG(debug, "nnz = {}", csr.nnz());
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
@@ -165,25 +169,25 @@ int main(int argc, char **argv) {
     start = std::chrono::system_clock::now();
 
     // create async counters
-    std::vector<pangolin::BinaryTC> counters;
+    std::vector<pangolin::VertexBlockBinaryTC> counters;
     for (int dev : gpus) {
       LOG(debug, "create device {} counter", dev);
-      counters.push_back(pangolin::BinaryTC(dev));
+      counters.push_back(pangolin::VertexBlockBinaryTC(dev, rowCacheSz));
     }
 
-    // determine the number of edges per gpu
-    const size_t edgesPerGPU = (csr.nnz() + gpus.size() - 1) / gpus.size();
-    LOG(debug, "{} edges per GPU", edgesPerGPU);
+    // determine the number of rows per GPU
+    const size_t rowsPerGPU = (csr.num_rows() + gpus.size() - 1) / gpus.size();
+    LOG(debug, "{} rows per GPU", rowsPerGPU);
 
     // launch counting operations
-    size_t edgeStart = 0;
+    size_t rowStart = 0;
     for (auto &counter : counters) {
-      const size_t edgeStop = std::min(edgeStart + edgesPerGPU, csr.nnz());
-      const size_t numEdges = edgeStop - edgeStart;
-      LOG(debug, "start async count on GPU {} ({} edges)", counter.device(),
-          numEdges);
-      counter.count_async(csr.view(), numEdges, edgeStart, coarsening);
-      edgeStart += edgesPerGPU;
+      const size_t rowStop = std::min(rowStart + rowsPerGPU, csr.nnz());
+      const size_t numRows = rowStop - rowStart;
+      LOG(debug, "start async count on GPU {} ({} rows)", counter.device(),
+          numRows);
+      counter.count_async(csr.view(), numRows, rowStart);
+      rowStart += rowsPerGPU;
     }
 
     // wait for counting operations to finish

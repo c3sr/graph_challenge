@@ -1,5 +1,17 @@
-#include <fmt/format.h>
+/*!
+
+Count triangles using the linear search.
+Simultaneously read and build the GPU implementation with a queue of edges.
+
+*/
+
+#include <deque>
 #include <iostream>
+#include <mutex>
+#include <queue>
+#include <thread>
+
+#include <fmt/format.h>
 
 #include <nvToolsExt.h>
 
@@ -7,9 +19,64 @@
 #include "pangolin/pangolin.cuh"
 #include "pangolin/pangolin.hpp"
 
+using pangolin::BoundedBuffer;
+
+template <typename EDGE>
+void produce(const std::string path, BoundedBuffer<EDGE> &queue) {
+  pangolin::EdgeListFile file(path);
+
+  std::vector<EDGE> fileEdges;
+  std::deque<EDGE> edgeQueue;
+
+  while (file.get_edges(fileEdges, 50)) {
+
+    for (const auto e : fileEdges) {
+      edgeQueue.push_back(e);
+    }
+    while (!edgeQueue.empty()) {
+      queue.push_some(edgeQueue);
+    }
+  }
+
+  queue.close();
+}
+
+template <typename Mat, typename EDGE>
+void consume(BoundedBuffer<EDGE> &queue, Mat &mat) {
+
+  auto upperTriangular = [](pangolin::EdgeTy<uint64_t> e) {
+    return e.first < e.second;
+  };
+
+  // keep grabbing while queue is filling
+  LOG(debug, "reading queue");
+  while (true) {
+    std::vector<EDGE> vals = queue.pop_some();
+    if (vals.empty()) {
+      // the queue has no values and no more are coming, so we can quit
+      assert(queue.empty());
+      assert(queue.closed());
+      break;
+    }
+
+    for (const auto val : vals) {
+      if (upperTriangular(val)) {
+        SPDLOG_TRACE(pangolin::logger::console(), "{} {}", val.first,
+                     val.second);
+        mat.add_next_edge(val);
+      }
+    }
+  }
+
+  mat.finish_edges();
+}
+
 int main(int argc, char **argv) {
 
-  pangolin::Config config;
+  pangolin::init();
+
+  typedef uint64_t Index64;
+  typedef pangolin::EdgeTy<Index64> Edge64;
 
   std::vector<int> gpus;
   std::string path;
@@ -82,41 +149,84 @@ int main(int argc, char **argv) {
     gpus.push_back(0);
   }
 
-  // read data
-  auto start = std::chrono::system_clock::now();
-  pangolin::EdgeListFile file(path);
-
-  std::vector<pangolin::EdgeTy<uint64_t>> edges;
-  std::vector<pangolin::EdgeTy<uint64_t>> fileEdges;
-  while (file.get_edges(fileEdges, 10)) {
-    edges.insert(edges.end(), fileEdges.begin(), fileEdges.end());
+  // Check for unified memory support
+  bool managed = true;
+  for (auto gpu : gpus) {
+    cudaDeviceProp prop;
+    CUDA_RUNTIME(cudaGetDeviceProperties(&prop, gpu));
+    // We check for concurrentManagedAccess, as devices with only the
+    // managedAccess property have extra synchronization requirements.
+    if (prop.concurrentManagedAccess) {
+      LOG(debug, "device {} prop.concurrentManagedAccess=1", gpu);
+    } else {
+      LOG(warn, "device {} prop.concurrentManagedAccess=0", gpu);
+    }
+    managed = managed && prop.concurrentManagedAccess;
+    if (prop.canMapHostMemory) {
+      LOG(debug, "device {} prop.canMapHostMemory=1", gpu);
+    } else {
+      LOG(warn, "device {} prop.canMapHostMemory=0", gpu);
+    }
   }
+
+  if (!managed) {
+    prefetchAsync = false;
+    LOG(warn, "disabling prefetch");
+    readMostly = false;
+    LOG(warn, "disabling readMostly");
+    accessedBy = false;
+    LOG(warn, "disabling accessedBy");
+  }
+
+  // Check for mapping host memory memory support
+  for (auto gpu : gpus) {
+    CUDA_RUNTIME(cudaSetDevice(gpu));
+    unsigned int flags = 0;
+    CUDA_RUNTIME(cudaGetDeviceFlags(&flags));
+    if (flags & cudaDeviceMapHost) {
+      LOG(debug, "device {} cudaDeviceMapHost=1", gpu);
+    } else {
+      LOG(warn, "device {} cudaDeviceMapHost=0", gpu);
+      // exit(-1);
+    }
+  }
+
+  // read data / build
+  auto start = std::chrono::system_clock::now();
+
+  BoundedBuffer<Edge64> queue;
+  pangolin::COO<Index64> csr;
+  // start a thread to read the matrix data
+  LOG(debug, "start disk reader");
+  std::thread reader(produce<Edge64>, path, std::ref(queue));
+
+  // start a thread to build the matrix
+  LOG(debug, "start csr build");
+  std::thread builder(consume<pangolin::COO<Index64>, Edge64>, std::ref(queue),
+                      std::ref(csr));
+  // consume(queue, csr, &readerActive);
+
+  LOG(debug, "waiting for disk reader...");
+  reader.join();
+  LOG(debug, "waiting for CSR builder...");
+  builder.join();
+  assert(queue.empty());
+
   double elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
-  LOG(info, "read_data time {}s", elapsed);
-  LOG(debug, "read {} edges", edges.size());
+  LOG(info, "read_data/build time {}s", elapsed);
 
   // create csr and count `iters` times
   std::vector<double> times;
   uint64_t nnz;
   uint64_t tris;
-  for (int i = 0; i < iters; ++i) {
-    // create csr
-    start = std::chrono::system_clock::now();
-    auto upperTriangular = [](pangolin::EdgeTy<uint64_t> e) {
-      return e.first < e.second;
-    };
-    auto csr = pangolin::COO<uint64_t>::from_edges(edges.begin(), edges.end(),
-                                                   upperTriangular);
-    LOG(debug, "nnz = {}", csr.nnz());
-    elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
-    LOG(info, "create CSR time {}s", elapsed);
 
+  for (int i = 0; i < iters; ++i) {
     // read-mostly
     nvtxRangePush("read-mostly");
     start = std::chrono::system_clock::now();
     if (readMostly) {
+      csr.read_mostly();
       for (const auto &gpu : gpus) {
-        csr.read_mostly(gpu);
         CUDA_RUNTIME(cudaSetDevice(gpu));
         CUDA_RUNTIME(cudaDeviceSynchronize());
       }
@@ -175,7 +285,7 @@ int main(int argc, char **argv) {
       const size_t numEdges = edgeStop - edgeStart;
       LOG(debug, "start async count on GPU {} ({} edges)", counter.device(),
           numEdges);
-      counter.count_async(csr.view(), numEdges, edgeStart);
+      counter.count_async(csr.view(), edgeStart, numEdges);
       edgeStart += edgesPerGPU;
     }
 

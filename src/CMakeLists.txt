@@ -23,7 +23,7 @@ function(add_exe)
     -Xcompiler=-Wfloat-equal;
     -Xcompiler=-Wundef;
     -Xcompiler=-Wvla;
-    -Xcompiler=-Wshadow>
+    -Xcompiler=-Wshadow;>
     )
     target_link_libraries(${PARSED_ARGS_NAME} PUBLIC pangolin::pangolin)
     target_link_libraries(${PARSED_ARGS_NAME} PUBLIC nvToolsExt)
@@ -40,6 +40,7 @@ if (OpenMP_CXX_FOUND)
     set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler=${OpenMP_CXX_FLAGS}")
 endif()
 
+<<<<<<< HEAD
 #add_exe(NAME gc SRCS main.cu)
 #add_exe(NAME benchmark-linear SRCS benchmark_linear.cu)
 #add_exe(NAME benchmark-binary SRCS benchmark_binary.cu)
@@ -48,3 +49,16 @@ add_exe(NAME benchmark-ktruss_linear SRCS benchmark_ktruss.cu)
 add_exe(NAME benchmark-binary-ktruss SRCS benchmark_binary_ktruss.cu)
 add_exe(NAME benchmark-multiGPU-binary-ktruss SRCS benchmark_multiGPU_binary_ktruss.cu)
 #add_exe(NAME loads SRCS loads.cu)
+=======
+add_exe(NAME 2dhist SRCS 2dhist.cu)
+add_exe(NAME benchmark-b-vertex-t-edge-binary SRCS benchmark_b_vertex_t_edge_binary.cu)
+add_exe(NAME benchmark-bs-vertex-t-edge-binary SRCS benchmark_bs_vertex_t_edge_binary.cu)
+add_exe(NAME benchmark-vertex-blocks-cache-block-binary SRCS benchmark_vertex_blocks_cache_block_binary.cu)
+add_exe(NAME benchmark-binary SRCS benchmark_binary.cu)
+add_exe(NAME benchmark-linear-io-queue SRCS benchmark_linear_io_queue.cu)
+add_exe(NAME benchmark-linear-io-vec-queue SRCS benchmark_linear_io_vec_queue.cu)
+add_exe(NAME benchmark-linear-mp SRCS benchmark_linear_mp.cu)
+add_exe(NAME benchmark-linear3 SRCS benchmark_linear3.cu)
+add_exe(NAME loads SRCS loads.cu)
+add_exe(NAME pangolin-topo SRCS pangolin_topo.cu)
+>>>>>>> origin/master
