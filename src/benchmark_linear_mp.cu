@@ -29,6 +29,7 @@ int main(int argc, char **argv) {
   bool help = false;
   bool debug = false;
   bool verbose = false;
+  size_t dimBlock = 64;
 
   bool readMostly = false;
   bool accessedBy = false;
@@ -47,6 +48,8 @@ int main(int argc, char **argv) {
   cli = cli | clara::Opt(prefetchAsync)["--prefetch-async"](
                   "prefetch data to all GPUs before kernel");
   cli = cli | clara::Opt(iters, "N")["-n"]("number of counts");
+  cli = cli |
+  clara::Opt(dimBlock, "block-dim")["-b"]("Number of threads in a block");
   cli =
       cli | clara::Arg(path, "graph file")("Path to adjacency list").required();
 
@@ -253,7 +256,7 @@ int main(int argc, char **argv) {
       const size_t numEdges = edgeStop - edgeStart;
       LOG(debug, "omp thread {}: start async count on GPU {} ({} edges)",
           omp_get_thread_num(), counter.device(), numEdges);
-      counter.count_async(csr.view(), edgeStart, numEdges);
+      counter.count_async(csr.view(), edgeStart, numEdges, dimBlock);
 
       // wait for counting operations to finish
       LOG(debug, "omp thread {}: wait for counter on GPU {}",

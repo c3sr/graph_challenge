@@ -19,6 +19,7 @@ int main(int argc, char **argv) {
 
   std::vector<int> gpus;
   std::string path;
+  int dimBlock = 512;
   int coarsening = 1;
   int iters = 1;
   bool help = false;
@@ -37,6 +38,8 @@ int main(int argc, char **argv) {
   cli = cli | clara::Opt(gpus, "dev ids")["-g"]("gpus to use");
   cli = cli | clara::Opt(coarsening,
                          "coarsening")["-c"]("Number of elements per thread");
+  cli = cli |
+        clara::Opt(dimBlock, "block-dim")["-b"]("Number of threads in a block");
   cli = cli | clara::Opt(readMostly)["--read-mostly"](
                   "mark data as read-mostly by all gpus before kernel");
   cli = cli | clara::Opt(accessedBy)["--accessed-by"](
@@ -182,7 +185,8 @@ int main(int argc, char **argv) {
       const size_t numEdges = edgeStop - edgeStart;
       LOG(debug, "start async count on GPU {} ({} edges)", counter.device(),
           numEdges);
-      counter.count_async(csr.view(), numEdges, edgeStart, coarsening);
+      counter.count_async(csr.view(), numEdges, edgeStart, dimBlock,
+                          coarsening);
       edgeStart += edgesPerGPU;
     }
 

@@ -103,8 +103,9 @@ int main(int argc, char **argv) {
   auto start = std::chrono::system_clock::now();
   pangolin::EdgeListFile file(path);
 
-  std::vector<pangolin::EdgeTy<uint64_t>> edges;
-  std::vector<pangolin::EdgeTy<uint64_t>> fileEdges;
+  LOG(info, "using {}B ints", sizeof(uint32_t));
+  std::vector<pangolin::EdgeTy<uint32_t>> edges;
+  std::vector<pangolin::EdgeTy<uint32_t>> fileEdges;
   while (file.get_edges(fileEdges, 10)) {
     edges.insert(edges.end(), fileEdges.begin(), fileEdges.end());
   }
@@ -120,16 +121,16 @@ int main(int argc, char **argv) {
     // create csr
     nvtxRangePush("create csr");
     start = std::chrono::system_clock::now();
-    auto upperTriangularFilter = [](pangolin::EdgeTy<uint64_t> e) {
+    auto upperTriangularFilter = [](pangolin::EdgeTy<uint32_t> e) {
       return e.first < e.second;
     };
-    auto lowerTriangularFilter = [](pangolin::EdgeTy<uint64_t> e) {
+    auto lowerTriangularFilter = [](pangolin::EdgeTy<uint32_t> e) {
       return e.first > e.second;
     };
     auto csr = upperTriangular
-                   ? pangolin::CSR<uint64_t>::from_edges(
+                   ? pangolin::CSR<uint32_t>::from_edges(
                          edges.begin(), edges.end(), upperTriangularFilter)
-                   : pangolin::CSR<uint64_t>::from_edges(
+                   : pangolin::CSR<uint32_t>::from_edges(
                          edges.begin(), edges.end(), lowerTriangularFilter);
 
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;

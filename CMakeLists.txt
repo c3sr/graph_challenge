@@ -34,7 +34,6 @@ endif()
 
 if(CMAKE_BUILD_TYPE MATCHES "Release")
     set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo")
-    message(STATUS "${CMAKE_CUDA_FLAGS}")
 elseif(CMAKE_BUILD_TYPE MATCHES "Debug")
     set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")
 endif()
