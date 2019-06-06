@@ -1,10 +1,12 @@
+#if PANGOLIN_USE_MPI == 1
 #include <mpi.h>
+#endif
 
 #include "pangolin/pangolin.cuh"
 #include "pangolin/pangolin.hpp"
 
 int main(int argc, char **argv) {
-
+#if PANGOLIN_USE_MPI == 1
   // Initialize the MPI environment
   MPI_Init(&argc, &argv);
 
@@ -37,6 +39,12 @@ int main(int argc, char **argv) {
 
   // Finalize the MPI environment.
   MPI_Finalize();
-
   return 0;
+#else
+  (void) argc;
+  (void) argv;
+  printf("pangolin not compiled with MPI support, or MPI not found\n");
+  return -1;
+#endif
+
 }
