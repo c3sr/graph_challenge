@@ -4,7 +4,7 @@ function(add_exe)
     PARSED_ARGS # prefix of output variables
     "" # list of names of boolean arguments
     "NAME" # list of names of mono-valued arguments
-    "SRCS" # list of names of nuluti-valued arguments
+    "SRCS" # list of names of multi-valued arguments
     ${ARGN} # arguments of the function to parse
     )
     add_executable(${PARSED_ARGS_NAME} ${PARSED_ARGS_SRCS})
@@ -45,6 +45,7 @@ add_exe(NAME benchmark-b-vertex-t-edge-binary SRCS benchmark_b_vertex_t_edge_bin
 add_exe(NAME benchmark-bs-vertex-t-edge-binary SRCS benchmark_bs_vertex_t_edge_binary.cu)
 add_exe(NAME benchmark-vertex-blocks-cache-block-binary SRCS benchmark_vertex_blocks_cache_block_binary.cu)
 add_exe(NAME benchmark-binary SRCS benchmark_binary.cu)
+add_exe(NAME benchmark-dyn SRCS benchmark_dyn.cu)
 add_exe(NAME benchmark-linear-io-queue SRCS benchmark_linear_io_queue.cu)
 add_exe(NAME benchmark-linear-io-vec-queue SRCS benchmark_linear_io_vec_queue.cu)
 add_exe(NAME benchmark-linear-mp SRCS benchmark_linear_mp.cu)
