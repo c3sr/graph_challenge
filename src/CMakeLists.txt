@@ -45,4 +45,5 @@ endif()
 add_exe(NAME benchmark-ktruss_linear SRCS benchmark_ktruss.cu)
 add_exe(NAME benchmark-binary-ktruss SRCS benchmark_binary_ktruss.cu)
 add_exe(NAME benchmark-multiGPU-binary-ktruss SRCS benchmark_multiGPU_binary_ktruss.cu)
-#add_exe(NAME mpi-test SRCS mpi_test.cu)
+
+add_exe(NAME mpi-test SRCS mpi_test.cu)
