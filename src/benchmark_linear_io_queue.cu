@@ -108,6 +108,7 @@ struct RunOptions {
   std::vector<int> gpus;
   std::string path;
   std::string sep;
+  int blockSize;
 
   bool readMostly;
   bool accessedBy;
@@ -115,7 +116,7 @@ struct RunOptions {
 };
 
 void print_header(const RunOptions &opts) {
-  fmt::print("benchmark{0}graph{0}nodes{0}edges{0}tris", opts.sep);
+  fmt::print("benchmark{0}bs{0}graph{0}nodes{0}edges{0}tris", opts.sep);
   for (auto i = 0; i < opts.iters; ++i) {
     fmt::print("{}readMostly{}", opts.sep, i);
   }
@@ -186,6 +187,7 @@ template <typename Index> int run(RunOptions &opts) {
   }
 
   fmt::print("linear-io-queue");
+  fmt::print("{}{}", opts.sep, opts.blockSize);
 
   // read data / build
   auto start = std::chrono::system_clock::now();
@@ -288,7 +290,7 @@ template <typename Index> int run(RunOptions &opts) {
       const size_t edgeStop = std::min(edgeStart + edgesPerGPU, csr.nnz());
       const size_t numEdges = edgeStop - edgeStart;
       LOG(debug, "start async count on GPU {} ({} edges)", counter.device(), numEdges);
-      counter.count_async(csr.view(), edgeStart, numEdges);
+      counter.count_async(csr.view(), edgeStart, numEdges, opts.blockSize);
       edgeStart += edgesPerGPU;
     }
 
@@ -341,7 +343,9 @@ int main(int argc, char **argv) {
   opts.readMostly = false;
   opts.accessedBy = false;
   opts.prefetchAsync = false;
+  opts.blockSize = 256;
   opts.sep = ",";
+
 
   clara::Parser cli;
   cli = cli | clara::Help(help);
@@ -354,6 +358,7 @@ int main(int argc, char **argv) {
   cli = cli | clara::Opt(opts.accessedBy)["--accessed-by"]("mark data as accessed-by all GPUs before kernel");
   cli = cli | clara::Opt(opts.prefetchAsync)["--prefetch-async"]("prefetch data to all GPUs before kernel");
   cli = cli | clara::Opt(opts.iters, "N")["-n"]("number of counts");
+  cli = cli | clara::Opt(opts.blockSize, "N")["--bs"]("block size for counting kernel");
   cli = cli | clara::Arg(opts.path, "graph file")("Path to adjacency list").required();
 
   auto result = cli.parse(clara::Args(argc, argv));
