@@ -113,7 +113,7 @@ int main(int argc, char **argv) {
 
   std::vector<pangolin::EdgeTy<uint64_t>> edges;
   std::vector<pangolin::EdgeTy<uint64_t>> fileEdges;
-  while (file.get_edges(fileEdges, 10)) {
+  while (file.get_edges(fileEdges, 500)) {
     edges.insert(edges.end(), fileEdges.begin(), fileEdges.end());
   }
   double elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
