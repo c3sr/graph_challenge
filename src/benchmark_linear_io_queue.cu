@@ -20,14 +20,20 @@ Simultaneously read and build the GPU implementation with a queue of edges.
 
 using pangolin::BoundedBuffer;
 
+template <typename V> void print_vec(const V &vec, const std::string &sep) {
+  for (const auto &e : vec) {
+    fmt::print("{}{}", sep, e);
+  }
+}
+
 // Buffer is a BoundedBuffer with two entries (double buffer)
 template <typename T> using Buffer = BoundedBuffer<T, 2>;
 
-template <typename EDGE> void produce(const std::string path, Buffer<std::vector<EDGE>> &queue) {
+template <typename Edge> void produce(const std::string path, Buffer<std::vector<Edge>> &queue) {
   double readTime = 0, queueTime = 0;
   pangolin::EdgeListFile file(path);
 
-  std::vector<EDGE> edges;
+  std::vector<Edge> edges;
 
   while (true) {
     auto readStart = std::chrono::system_clock::now();
@@ -38,7 +44,7 @@ template <typename EDGE> void produce(const std::string path, Buffer<std::vector
     if (0 == readCount) {
       break;
     }
-    
+
     auto queueStart = std::chrono::system_clock::now();
     queue.push(std::move(edges));
     auto queueEnd = std::chrono::system_clock::now();
@@ -51,13 +57,17 @@ template <typename EDGE> void produce(const std::string path, Buffer<std::vector
   LOG(debug, "reader: {}s I/O, {}s blocked", readTime, queueTime);
 }
 
-template <typename Mat, typename EDGE> void consume(Buffer<std::vector<EDGE>> &queue, Mat &mat) {
+template <typename Mat> void consume(Buffer<std::vector<typename Mat::edge_type>> &queue, Mat &mat) {
+  typedef typename Mat::index_type Index;
+  typedef typename Mat::edge_type Edge;
+
   double queueTime = 0, csrTime = 0;
-  auto upperTriangular = [](pangolin::EdgeTy<uint64_t> e) { return e.first < e.second; };
+  auto upperTriangular = [](const Edge &e) { return e.first < e.second; };
 
   // keep grabbing while queue is filling
+  Index maxNode = 0;
   while (true) {
-    std::vector<EDGE> edges;
+    std::vector<Edge> edges;
     bool popped;
     SPDLOG_TRACE(pangolin::logger::console(), "builder: trying to pop...");
     auto queueStart = std::chrono::system_clock::now();
@@ -67,13 +77,16 @@ template <typename Mat, typename EDGE> void consume(Buffer<std::vector<EDGE>> &q
     if (popped) {
       SPDLOG_TRACE(pangolin::logger::console(), "builder: popped {} edges", edges.size());
       auto csrStart = std::chrono::system_clock::now();
-      for (const auto &edge : edges)
+      for (const auto &edge : edges) {
+        maxNode = max(edge.first, maxNode);
+        maxNode = max(edge.second, maxNode);
         if (upperTriangular(edge)) {
           // SPDLOG_TRACE(pangolin::logger::console(), "{} {}", edge.first, edge.second);
           mat.add_next_edge(edge);
         }
-        auto csrEnd = std::chrono::system_clock::now();
-        csrTime += (csrEnd - csrStart).count() / 1e9;
+      }
+      auto csrEnd = std::chrono::system_clock::now();
+      csrTime += (csrEnd - csrStart).count() / 1e9;
     } else {
       SPDLOG_TRACE(pangolin::logger::console(), "builder: no edges after pop");
       assert(queue.empty());
@@ -83,80 +96,48 @@ template <typename Mat, typename EDGE> void consume(Buffer<std::vector<EDGE>> &q
   }
 
   auto csrStart = std::chrono::system_clock::now();
-  mat.finish_edges();
+  mat.finish_edges(maxNode);
   auto csrEnd = std::chrono::system_clock::now();
   csrTime += (csrEnd - csrStart).count() / 1e9;
 
   LOG(debug, "builder: {}s csr {}s blocked", csrTime, queueTime);
 }
 
-int main(int argc, char **argv) {
-
-  pangolin::init();
-
-  typedef uint64_t Index64;
-  typedef pangolin::EdgeTy<Index64> Edge64;
-
+struct RunOptions {
+  int iters;
   std::vector<int> gpus;
   std::string path;
-  int iters = 1;
-  bool help = false;
-  bool debug = false;
-  bool verbose = false;
+  std::string sep;
 
-  bool readMostly = false;
-  bool accessedBy = false;
-  bool prefetchAsync = false;
+  bool readMostly;
+  bool accessedBy;
+  bool prefetchAsync;
+};
 
-  clara::Parser cli;
-  cli = cli | clara::Help(help);
-  cli = cli | clara::Opt(debug)["--debug"]("print debug messages to stderr");
-  cli = cli | clara::Opt(verbose)["--verbose"]("print verbose messages to stderr");
-  cli = cli | clara::Opt(gpus, "ids")["-g"]("gpus to use");
-  cli = cli | clara::Opt(readMostly)["--read-mostly"]("mark data as read-mostly by all gpus before kernel");
-  cli = cli | clara::Opt(accessedBy)["--accessed-by"]("mark data as accessed-by all GPUs before kernel");
-  cli = cli | clara::Opt(prefetchAsync)["--prefetch-async"]("prefetch data to all GPUs before kernel");
-  cli = cli | clara::Opt(iters, "N")["-n"]("number of counts");
-  cli = cli | clara::Arg(path, "graph file")("Path to adjacency list").required();
-
-  auto result = cli.parse(clara::Args(argc, argv));
-  if (!result) {
-    LOG(error, "Error in command line: {}", result.errorMessage());
-    exit(1);
+void print_header(const RunOptions &opts) {
+  fmt::print("benchmark{0}graph{0}nodes{0}edges{0}tris", opts.sep);
+  for (auto i = 0; i < opts.iters; ++i) {
+    fmt::print("{}readMostly{}", opts.sep, i);
   }
-
-  if (help) {
-    std::cout << cli;
-    return 0;
+  for (auto i = 0; i < opts.iters; ++i) {
+    fmt::print("{}accessedBy{}", opts.sep, i);
   }
-
-  // set logging level
-  if (verbose) {
-    pangolin::logger::set_level(pangolin::logger::Level::TRACE);
-  } else if (debug) {
-    pangolin::logger::set_level(pangolin::logger::Level::DEBUG);
+  for (auto i = 0; i < opts.iters; ++i) {
+    fmt::print("{}prefetch{}", opts.sep, i);
   }
-
-  // log command line before much else happens
-  {
-    std::string cmd;
-    for (int i = 0; i < argc; ++i) {
-      if (i != 0) {
-        cmd += " ";
-      }
-      cmd += argv[i];
-    }
-    LOG(debug, cmd);
+  for (auto i = 0; i < opts.iters; ++i) {
+    fmt::print("{}time{}", opts.sep, i);
   }
-  LOG(debug, "pangolin version: {}.{}.{}", PANGOLIN_VERSION_MAJOR, PANGOLIN_VERSION_MINOR, PANGOLIN_VERSION_PATCH);
-  LOG(debug, "pangolin branch:  {}", PANGOLIN_GIT_REFSPEC);
-  LOG(debug, "pangolin sha:     {}", PANGOLIN_GIT_HASH);
-  LOG(debug, "pangolin changes: {}", PANGOLIN_GIT_LOCAL_CHANGES);
+  for (auto i = 0; i < opts.iters; ++i) {
+    fmt::print("{}teps{}", opts.sep, i);
+  }
+  fmt::print("\n");
+}
 
-#ifndef NDEBUG
-  LOG(warn, "Not a release build");
-#endif
+template <typename Index> int run(RunOptions &opts) {
+  typedef pangolin::EdgeTy<Index> Edge;
 
+  std::vector<int> gpus = opts.gpus;
   if (gpus.empty()) {
     LOG(warn, "no GPUs provided on command line, using GPU 0");
     gpus.push_back(0);
@@ -183,11 +164,11 @@ int main(int argc, char **argv) {
   }
 
   if (!managed) {
-    prefetchAsync = false;
+    opts.prefetchAsync = false;
     LOG(warn, "disabling prefetch");
-    readMostly = false;
+    opts.readMostly = false;
     LOG(warn, "disabling readMostly");
-    accessedBy = false;
+    opts.accessedBy = false;
     LOG(warn, "disabling accessedBy");
   }
 
@@ -204,18 +185,20 @@ int main(int argc, char **argv) {
     }
   }
 
+  fmt::print("linear-io-queue");
+
   // read data / build
   auto start = std::chrono::system_clock::now();
 
-  Buffer<std::vector<Edge64>> queue;
-  pangolin::COO<Index64> csr;
+  Buffer<std::vector<Edge>> queue;
+  pangolin::COO<Index> csr;
   // start a thread to read the matrix data
   LOG(debug, "start disk reader");
-  std::thread reader(produce<Edge64>, path, std::ref(queue));
+  std::thread reader(produce<Edge>, opts.path, std::ref(queue));
 
   // start a thread to build the matrix
   LOG(debug, "start csr build");
-  std::thread builder(consume<pangolin::COO<Index64>, Edge64>, std::ref(queue), std::ref(csr));
+  std::thread builder(consume<pangolin::COO<Index>>, std::ref(queue), std::ref(csr));
   // consume(queue, csr, &readerActive);
 
   LOG(debug, "waiting for disk reader...");
@@ -226,17 +209,23 @@ int main(int argc, char **argv) {
 
   double elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
   LOG(info, "read_data/build time {}s", elapsed);
+  LOG(debug, "CSR: nnz = {}, rows = {}", csr.nnz(), csr.num_rows());
 
-  // create csr and count `iters` times
+  fmt::print("{}{}", opts.sep, opts.path);
+  fmt::print("{}{}", opts.sep, csr.nnz());
+  fmt::print("{}{}", opts.sep, csr.num_rows());
+
+  // count `iters` times
   std::vector<double> times;
-  uint64_t nnz;
-  uint64_t tris;
-
-  for (int i = 0; i < iters; ++i) {
+  std::vector<uint64_t> tris;
+  std::vector<double> readMostlyTimes;
+  std::vector<double> accessedByTimes;
+  std::vector<double> prefetchTimes;
+  for (int i = 0; i < opts.iters; ++i) {
     // read-mostly
     nvtxRangePush("read-mostly");
     start = std::chrono::system_clock::now();
-    if (readMostly) {
+    if (opts.readMostly) {
       csr.read_mostly();
       for (const auto &gpu : gpus) {
         CUDA_RUNTIME(cudaSetDevice(gpu));
@@ -245,12 +234,13 @@ int main(int argc, char **argv) {
     }
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
     nvtxRangePop();
+    readMostlyTimes.push_back(elapsed);
     LOG(info, "read-mostly CSR time {}s", elapsed);
 
     // accessed-by
     nvtxRangePush("accessed-by");
     start = std::chrono::system_clock::now();
-    if (accessedBy) {
+    if (opts.accessedBy) {
       for (const auto &gpu : gpus) {
         csr.accessed_by(gpu);
         CUDA_RUNTIME(cudaSetDevice(gpu));
@@ -260,11 +250,12 @@ int main(int argc, char **argv) {
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
     nvtxRangePop();
     LOG(info, "accessed-by CSR time {}s", elapsed);
+    accessedByTimes.push_back(elapsed);
 
     // prefetch
     nvtxRangePush("prefetch");
     start = std::chrono::system_clock::now();
-    if (prefetchAsync) {
+    if (opts.prefetchAsync) {
       for (const auto &gpu : gpus) {
         csr.prefetch_async(gpu);
         CUDA_RUNTIME(cudaSetDevice(gpu));
@@ -274,6 +265,7 @@ int main(int argc, char **argv) {
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
     nvtxRangePop();
     LOG(info, "prefetch CSR time {}s", elapsed);
+    prefetchTimes.push_back(elapsed);
 
     // count triangles
     nvtxRangePush("count");
@@ -313,15 +305,105 @@ int main(int argc, char **argv) {
     LOG(info, "count time {}s", elapsed);
     LOG(info, "{} triangles ({} teps)", total, csr.nnz() / elapsed);
     times.push_back(elapsed);
-    tris = total;
-    nnz = csr.nnz();
+    tris.push_back(total);
   }
 
-  std::cout << path << ",\t" << nnz << ",\t" << tris;
-  for (const auto &t : times) {
-    std::cout << ",\t" << t;
+  if (opts.iters > 0) {
+    fmt::print("{}{}", opts.sep, tris[0]);
+
+    print_vec(readMostlyTimes, opts.sep);
+    print_vec(accessedByTimes, opts.sep);
+    print_vec(prefetchTimes, opts.sep);
+    print_vec(times, opts.sep);
+    for (const auto &s : times) {
+      fmt::print("{}{}", opts.sep, csr.nnz() / s);
+    }
   }
-  std::cout << std::endl;
+  fmt::print("\n");
 
   return 0;
+}
+
+int main(int argc, char **argv) {
+
+  pangolin::init();
+
+  // options not passed to run
+  bool help = false;
+  bool debug = false;
+  bool verbose = false;
+  bool wide = false;
+  bool header = false;
+
+  // options passed to run
+  RunOptions opts;
+  opts.iters = 1;
+  opts.readMostly = false;
+  opts.accessedBy = false;
+  opts.prefetchAsync = false;
+  opts.sep = ",";
+
+  clara::Parser cli;
+  cli = cli | clara::Help(help);
+  cli = cli | clara::Opt(debug)["--debug"]("print debug messages to stderr");
+  cli = cli | clara::Opt(verbose)["--verbose"]("print verbose messages to stderr");
+  cli = cli | clara::Opt(wide)["--wide"]("64 bit node IDs");
+  cli = cli | clara::Opt(header)["--header"]("Only print CSV header, don't run");
+  cli = cli | clara::Opt(opts.gpus, "ids")["-g"]("gpus to use");
+  cli = cli | clara::Opt(opts.readMostly)["--read-mostly"]("mark data as read-mostly by all gpus before kernel");
+  cli = cli | clara::Opt(opts.accessedBy)["--accessed-by"]("mark data as accessed-by all GPUs before kernel");
+  cli = cli | clara::Opt(opts.prefetchAsync)["--prefetch-async"]("prefetch data to all GPUs before kernel");
+  cli = cli | clara::Opt(opts.iters, "N")["-n"]("number of counts");
+  cli = cli | clara::Arg(opts.path, "graph file")("Path to adjacency list").required();
+
+  auto result = cli.parse(clara::Args(argc, argv));
+  if (!result) {
+    LOG(error, "Error in command line: {}", result.errorMessage());
+    exit(1);
+  }
+
+  if (help) {
+    std::cout << cli;
+    return 0;
+  }
+
+  // set logging level
+  if (verbose) {
+    pangolin::logger::set_level(pangolin::logger::Level::TRACE);
+  } else if (debug) {
+    pangolin::logger::set_level(pangolin::logger::Level::DEBUG);
+  }
+
+  // log command line before much else happens
+  {
+    std::string cmd;
+    for (int i = 0; i < argc; ++i) {
+      if (i != 0) {
+        cmd += " ";
+      }
+      cmd += argv[i];
+    }
+    LOG(debug, cmd);
+  }
+  LOG(debug, "pangolin version: {}.{}.{}", PANGOLIN_VERSION_MAJOR, PANGOLIN_VERSION_MINOR, PANGOLIN_VERSION_PATCH);
+  LOG(debug, "pangolin branch:  {}", PANGOLIN_GIT_REFSPEC);
+  LOG(debug, "pangolin sha:     {}", PANGOLIN_GIT_HASH);
+  LOG(debug, "pangolin changes: {}", PANGOLIN_GIT_LOCAL_CHANGES);
+
+#ifndef NDEBUG
+  LOG(warn, "Not a release build");
+#endif
+
+  if (header) {
+    print_header(opts);
+    return 0;
+  } else {
+    if (wide) {
+      LOG(debug, "using 64-bit node IDs (--wide)");
+      return run<uint64_t>(opts);
+    } else {
+      LOG(debug, "using 32-bit node IDs (--wide for 64)");
+      return run<uint32_t>(opts);
+    }
+  }
 }
