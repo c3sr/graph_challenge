@@ -38,10 +38,10 @@ int main(int argc, char **argv) {
   cli = cli | clara::Help(help);
   cli = cli | clara::Opt(debug)["--debug"]("print debug messages to stderr");
   cli = cli | clara::Opt(verbose)["--verbose"]("print verbose messages to stderr");
-  cli = cli | clara::Opt(onlyPrintHeader)["--print-header"]("print the header for the times output and quit");
+  cli = cli | clara::Opt(onlyPrintHeader)["--header"]("print the header for the times output and quit");
   cli = cli | clara::Opt(gpus, "dev ids")["-g"]("gpus to use");
   cli = cli | clara::Opt(coarsening, "coarsening")["-c"]("Number of elements per thread");
-  cli = cli | clara::Opt(dimBlock, "block-dim")["-b"]("Number of threads in a block");
+  cli = cli | clara::Opt(dimBlock, "block-dim")["--bs"]("Number of threads in a block");
   cli = cli | clara::Opt(readMostly)["--read-mostly"]("mark data as read-mostly by all gpus before kernel");
   cli = cli | clara::Opt(accessedBy)["--accessed-by"]("mark data as accessed-by all GPUs before kernel");
   cli = cli | clara::Opt(prefetchAsync)["--prefetch-async"]("prefetch data to all GPUs before kernel");
@@ -146,7 +146,7 @@ int main(int argc, char **argv) {
     auto upperTriangularFilter = [](pangolin::EdgeTy<uint64_t> e) { return e.first < e.second; };
     auto lowerTriangularFilter = [](pangolin::EdgeTy<uint64_t> e) { return e.first > e.second; };
     auto csr = pangolin::COO<uint64_t>::from_edges(edges.begin(), edges.end(), upperTriangularFilter);
-    LOG(debug, "nnz = {}", csr.nnz());
+    LOG(debug, "CSR nnz = {} rows = {}", csr.nnz(), csr.num_rows());
     elapsed = (std::chrono::system_clock::now() - iterStart).count() / 1e9;
     LOG(info, "create CSR time {}s", elapsed);
     csrTimes[i] = elapsed;
