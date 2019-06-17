@@ -5,11 +5,10 @@ Simultaneously read and build the GPU implementation with a queue of edges.
 
 */
 
-#include <deque>
 #include <iostream>
 #include <mutex>
-#include <queue>
 #include <thread>
+#include <vector>
 
 #include <fmt/format.h>
 
@@ -21,54 +20,74 @@ Simultaneously read and build the GPU implementation with a queue of edges.
 
 using pangolin::BoundedBuffer;
 
-template <typename EDGE>
-void produce(const std::string path, BoundedBuffer<EDGE> &queue) {
+// Buffer is a BoundedBuffer with two entries (double buffer)
+template <typename T> using Buffer = BoundedBuffer<T, 2>;
+
+template <typename EDGE> void produce(const std::string path, Buffer<std::vector<EDGE>> &queue) {
+  double readTime = 0, queueTime = 0;
   pangolin::EdgeListFile file(path);
 
-  std::vector<EDGE> fileEdges;
-  std::deque<EDGE> edgeQueue;
+  std::vector<EDGE> edges;
 
-  while (file.get_edges(fileEdges, 50)) {
-
-    for (const auto e : fileEdges) {
-      edgeQueue.push_back(e);
+  while (true) {
+    auto readStart = std::chrono::system_clock::now();
+    size_t readCount = file.get_edges(edges, 500);
+    auto readEnd = std::chrono::system_clock::now();
+    readTime += (readEnd - readStart).count() / 1e9;
+    SPDLOG_TRACE(pangolin::logger::console(), "reader: read {} edges", edges.size());
+    if (0 == readCount) {
+      break;
     }
-    while (!edgeQueue.empty()) {
-      queue.push_some(edgeQueue);
-    }
+    
+    auto queueStart = std::chrono::system_clock::now();
+    queue.push(std::move(edges));
+    auto queueEnd = std::chrono::system_clock::now();
+    queueTime += (queueEnd - queueStart).count() / 1e9;
+    SPDLOG_TRACE(pangolin::logger::console(), "reader: pushed edges");
   }
 
+  SPDLOG_TRACE(pangolin::logger::console(), "reader: closing queue");
   queue.close();
+  LOG(debug, "reader: {}s I/O, {}s blocked", readTime, queueTime);
 }
 
-template <typename Mat, typename EDGE>
-void consume(BoundedBuffer<EDGE> &queue, Mat &mat) {
-
-  auto upperTriangular = [](pangolin::EdgeTy<uint64_t> e) {
-    return e.first < e.second;
-  };
+template <typename Mat, typename EDGE> void consume(Buffer<std::vector<EDGE>> &queue, Mat &mat) {
+  double queueTime = 0, csrTime = 0;
+  auto upperTriangular = [](pangolin::EdgeTy<uint64_t> e) { return e.first < e.second; };
 
   // keep grabbing while queue is filling
-  LOG(debug, "reading queue");
   while (true) {
-    std::vector<EDGE> vals = queue.pop_some();
-    if (vals.empty()) {
-      // the queue has no values and no more are coming, so we can quit
+    std::vector<EDGE> edges;
+    bool popped;
+    SPDLOG_TRACE(pangolin::logger::console(), "builder: trying to pop...");
+    auto queueStart = std::chrono::system_clock::now();
+    auto queueEnd = std::chrono::system_clock::now();
+    queueTime += (queueEnd - queueStart).count() / 1e9;
+    edges = queue.pop(popped);
+    if (popped) {
+      SPDLOG_TRACE(pangolin::logger::console(), "builder: popped {} edges", edges.size());
+      auto csrStart = std::chrono::system_clock::now();
+      for (const auto &edge : edges)
+        if (upperTriangular(edge)) {
+          // SPDLOG_TRACE(pangolin::logger::console(), "{} {}", edge.first, edge.second);
+          mat.add_next_edge(edge);
+        }
+        auto csrEnd = std::chrono::system_clock::now();
+        csrTime += (csrEnd - csrStart).count() / 1e9;
+    } else {
+      SPDLOG_TRACE(pangolin::logger::console(), "builder: no edges after pop");
       assert(queue.empty());
       assert(queue.closed());
       break;
     }
-
-    for (const auto val : vals) {
-      if (upperTriangular(val)) {
-        SPDLOG_TRACE(pangolin::logger::console(), "{} {}", val.first,
-                     val.second);
-        mat.add_next_edge(val);
-      }
-    }
   }
 
+  auto csrStart = std::chrono::system_clock::now();
   mat.finish_edges();
+  auto csrEnd = std::chrono::system_clock::now();
+  csrTime += (csrEnd - csrStart).count() / 1e9;
+
+  LOG(debug, "builder: {}s csr {}s blocked", csrTime, queueTime);
 }
 
 int main(int argc, char **argv) {
@@ -92,18 +111,13 @@ int main(int argc, char **argv) {
   clara::Parser cli;
   cli = cli | clara::Help(help);
   cli = cli | clara::Opt(debug)["--debug"]("print debug messages to stderr");
-  cli = cli |
-        clara::Opt(verbose)["--verbose"]("print verbose messages to stderr");
+  cli = cli | clara::Opt(verbose)["--verbose"]("print verbose messages to stderr");
   cli = cli | clara::Opt(gpus, "ids")["-g"]("gpus to use");
-  cli = cli | clara::Opt(readMostly)["--read-mostly"](
-                  "mark data as read-mostly by all gpus before kernel");
-  cli = cli | clara::Opt(accessedBy)["--accessed-by"](
-                  "mark data as accessed-by all GPUs before kernel");
-  cli = cli | clara::Opt(prefetchAsync)["--prefetch-async"](
-                  "prefetch data to all GPUs before kernel");
+  cli = cli | clara::Opt(readMostly)["--read-mostly"]("mark data as read-mostly by all gpus before kernel");
+  cli = cli | clara::Opt(accessedBy)["--accessed-by"]("mark data as accessed-by all GPUs before kernel");
+  cli = cli | clara::Opt(prefetchAsync)["--prefetch-async"]("prefetch data to all GPUs before kernel");
   cli = cli | clara::Opt(iters, "N")["-n"]("number of counts");
-  cli =
-      cli | clara::Arg(path, "graph file")("Path to adjacency list").required();
+  cli = cli | clara::Arg(path, "graph file")("Path to adjacency list").required();
 
   auto result = cli.parse(clara::Args(argc, argv));
   if (!result) {
@@ -134,8 +148,7 @@ int main(int argc, char **argv) {
     }
     LOG(debug, cmd);
   }
-  LOG(debug, "pangolin version: {}.{}.{}", PANGOLIN_VERSION_MAJOR,
-      PANGOLIN_VERSION_MINOR, PANGOLIN_VERSION_PATCH);
+  LOG(debug, "pangolin version: {}.{}.{}", PANGOLIN_VERSION_MAJOR, PANGOLIN_VERSION_MINOR, PANGOLIN_VERSION_PATCH);
   LOG(debug, "pangolin branch:  {}", PANGOLIN_GIT_REFSPEC);
   LOG(debug, "pangolin sha:     {}", PANGOLIN_GIT_HASH);
   LOG(debug, "pangolin changes: {}", PANGOLIN_GIT_LOCAL_CHANGES);
@@ -194,7 +207,7 @@ int main(int argc, char **argv) {
   // read data / build
   auto start = std::chrono::system_clock::now();
 
-  BoundedBuffer<Edge64> queue;
+  Buffer<std::vector<Edge64>> queue;
   pangolin::COO<Index64> csr;
   // start a thread to read the matrix data
   LOG(debug, "start disk reader");
@@ -202,8 +215,7 @@ int main(int argc, char **argv) {
 
   // start a thread to build the matrix
   LOG(debug, "start csr build");
-  std::thread builder(consume<pangolin::COO<Index64>, Edge64>, std::ref(queue),
-                      std::ref(csr));
+  std::thread builder(consume<pangolin::COO<Index64>, Edge64>, std::ref(queue), std::ref(csr));
   // consume(queue, csr, &readerActive);
 
   LOG(debug, "waiting for disk reader...");
@@ -283,8 +295,7 @@ int main(int argc, char **argv) {
     for (auto &counter : counters) {
       const size_t edgeStop = std::min(edgeStart + edgesPerGPU, csr.nnz());
       const size_t numEdges = edgeStop - edgeStart;
-      LOG(debug, "start async count on GPU {} ({} edges)", counter.device(),
-          numEdges);
+      LOG(debug, "start async count on GPU {} ({} edges)", counter.device(), numEdges);
       counter.count_async(csr.view(), edgeStart, numEdges);
       edgeStart += edgesPerGPU;
     }
