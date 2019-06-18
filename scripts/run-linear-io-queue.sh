@@ -12,10 +12,11 @@ src/pangolin-version >> $EXPERIMENT_DIR/version.txt
 
 FLAGS="-g 0 --prefetch-async --debug -n 5"
 
+src/benchmark-linear-io-queue $FLAGS --header >> $EXPERIMENT_DIR/run.csv 2>>$EXPERIMENT_DIR/run.log
+
 for g in $GRAPH_DIR/*.bel; do
     for bs in 32 64 128 256 512; do
         echo $bs $g
-        echo -ne $bs,'\t' >> $EXPERIMENT_DIR/run.csv
         src/benchmark-linear-io-queue $FLAGS $g >> $EXPERIMENT_DIR/run.csv 2>>$EXPERIMENT_DIR/run.log
     done
 done
