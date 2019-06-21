@@ -12,6 +12,7 @@
 
 int main(int argc, char **argv) {
 
+   pangolin::init(); 
   pangolin::Config config;
 
   std::vector<int> gpus;
@@ -173,13 +174,18 @@ int main(int argc, char **argv) {
 
     // launch counting operations
     start = std::chrono::system_clock::now();
+
+    UT *rowPtr = csr.rowPtr_.data();
+    UT *rowInd = csr.rowInd_.data();
+    UT *colInd = csr.colInd_.data();
+
     size_t edgeStart = 0;
     for (auto &counter : counters) {
       const size_t edgeStop = std::min(edgeStart + edgesPerGPU, csr.nnz());
       const size_t numEdges = edgeStop - edgeStart;
       LOG(debug, "start async count on GPU {} ({} edges)", counter.device(),
           numEdges);
-      counter.findKtrussIncremental_async(3, 1000, csr.view(), csr.num_rows(), numEdges,0,edgeStart);
+      counter.findKtrussIncremental_async(3, 1000, rowPtr, rowInd, colInd, csr.num_rows(), numEdges,0,edgeStart);
       edgeStart += edgesPerGPU;
     }
 

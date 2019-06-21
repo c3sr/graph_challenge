@@ -21,7 +21,7 @@ int getMaxK(std::map<UT, int> degree)
 	for (it_type m = degree.rbegin(); m != degree.rend(); m++)
 	{
 		int degree = m->first;
-		int proposedKmax = degree + 1;
+		int proposedKmax = degree + 2;
 
 		reverseCount += m->second;
 
@@ -190,6 +190,32 @@ int main(int argc, char **argv) {
     //start = std::chrono::system_clock::now();
 
     //Find Kmax
+    int count = 0;
+
+    for(int i=0; i< csr.nnz(); i++)
+    {
+      UT src = csr.rowInd_[i];
+      UT dst = csr.colInd_[i];
+
+      if(src<0 || src > csr.num_rows())
+        {
+          printf("at element %d of rowIndex, val = %d where num of rows = %d\n", i, src, csr.num_rows());
+          count++;
+          if(count >= 6)
+            break;
+        }
+      
+        if(dst <0 ||  dst > csr.num_rows())
+        {
+          printf("at element %d of colIndex, val = %d where num of rows = %d\n", i, dst, csr.num_rows());
+          count++;
+          if(count >= 6)
+            break;
+        }  
+    }
+
+
+
     std::map<UT, int> degree;
     for (int i = 0; i < csr.num_rows(); i++)
     {
@@ -216,8 +242,14 @@ int main(int argc, char **argv) {
     // launch counting operations
     start = std::chrono::system_clock::now();
 
+    UT *rowPtr = csr.rowPtr_.data();
+    UT *rowInd = csr.rowInd_.data();
+    UT *colInd = csr.colInd_.data();
 
     int maxK = getMaxK(degree);
+
+    printf("NNZ=%u, NR=%u,Upper bound kmax=%d\n", csr.nnz(), csr.num_rows(), maxK);
+
 
     size_t edgeStart = 0;
     for (auto &counter : counters) {
@@ -225,7 +257,8 @@ int main(int argc, char **argv) {
       const size_t numEdges = edgeStop - edgeStart;
       LOG(debug, "start async count on GPU {} ({} edges)", counter.device(),
           numEdges);
-      counter.findKtrussBinary_async(3, maxK, csr.view(), csr.num_rows(), numEdges,0,edgeStart);
+      counter.findKtrussBinary_hsc_async(3, maxK, rowPtr, rowInd,colInd, csr.num_rows(), numEdges,0,edgeStart);
+      //counter.findKtrussBinary_async(3, maxK, csr.view(), csr.num_rows(), numEdges,0,edgeStart);
       edgeStart += edgesPerGPU;
     }
 
