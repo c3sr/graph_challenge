@@ -122,7 +122,7 @@ struct RunOptions {
 };
 
 void print_header(const RunOptions &opts) {
-  fmt::print("benchmark{0}bs{0}graph{0}nodes{0}edges{0}tris", opts.sep);
+  fmt::print("benchmark{0}bs{0}gpus{0}graph{0}nodes{0}edges{0}tris", opts.sep);
   for (auto i = 0; i < opts.iters; ++i) {
     fmt::print("{}readMostly{}", opts.sep, i);
   }
@@ -201,6 +201,11 @@ template <typename Index> int run(RunOptions &opts) {
 
   fmt::print("linear-io-queue");
   fmt::print("{}{}", opts.sep, opts.blockSize);
+  std::string gpuStr;
+  for (auto gpu : gpus) {
+    gpuStr += std::to_string(gpu);
+  }
+  fmt::print("{}{}",opts.sep, gpuStr);
 
   // read data / build
   auto start = std::chrono::system_clock::now();
