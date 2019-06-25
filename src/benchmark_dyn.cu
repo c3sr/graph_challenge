@@ -74,7 +74,7 @@ template <typename Index> int run(RunOptions &opts) {
     start = std::chrono::system_clock::now();
     auto upperTriangularFilter = [](Edge e) { return e.first < e.second; };
     auto lowerTriangularFilter = [](Edge e) { return e.first > e.second; };
-    auto adj = pangolin::COO<Index>::from_edges(edges.begin(), edges.end(), upperTriangularFilter);
+    auto adj = pangolin::CSRCOO<Index>::from_edges(edges.begin(), edges.end(), upperTriangularFilter);
     LOG(debug, "nnz = {}", adj.nnz());
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
     LOG(info, "create CSR time {}s", elapsed);

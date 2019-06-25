@@ -16,7 +16,6 @@ src/benchmark-binary --print-header $FLAGS
 for g in $GRAPH_DIR/*.bel; do
     for bs in 32 64 128 256 512; do
         echo $bs $g
-        echo -ne $bs,'\t' >> $EXPERIMENT_DIR/run.csv
-        src/benchmark-binary $FLAGS $g >> $EXPERIMENT_DIR/run.csv 2>>$EXPERIMENT_DIR/run.log
+        src/benchmark-binary $FLAGS --sb $bs $g >> $EXPERIMENT_DIR/run.csv 2>>$EXPERIMENT_DIR/run.log
     done
 done

@@ -356,7 +356,7 @@ int main(int argc, char **argv) {
   auto start = std::chrono::system_clock::now();
 
   LockQueue<std::vector<Edge64>> queue;
-  pangolin::COO<Index64> csr;
+  pangolin::CSRCOO<Index64> csr;
   volatile bool readerActive = true;
   // start a thread to read the matrix data
   LOG(debug, "start disk reader");
@@ -364,7 +364,7 @@ int main(int argc, char **argv) {
 
   // start a thread to build the matrix
   LOG(debug, "start csr build");
-  std::thread builder(consume<pangolin::COO<Index64>, Edge64>, std::ref(queue),
+  std::thread builder(consume<pangolin::CSRCOO<Index64>, Edge64>, std::ref(queue),
                       std::ref(csr), &readerActive);
   // consume(queue, csr, &readerActive);
 

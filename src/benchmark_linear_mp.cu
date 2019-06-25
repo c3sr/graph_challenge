@@ -14,14 +14,19 @@ Use one thread for each triangle counter through OpenMP.
 #include <unistd.h>
 
 #include "clara/clara.hpp"
-#include "pangolin/pangolin.cuh"
-#include "pangolin/pangolin.hpp"
+
+#include "pangolin/algorithm/tc_edge_linear.cuh"
+#include "pangolin/configure.hpp"
+#include "pangolin/file/edge_list_file.hpp"
+#include "pangolin/init.hpp"
+#include "pangolin/sparse/csr_coo.hpp"
+#include "pangolin/cuda_cxx/rc_stream.hpp"
 
 int main(int argc, char **argv) {
 
-  pangolin::init();
+  using pangolin::RcStream;
 
-  pangolin::Config config;
+  pangolin::init();
 
   std::vector<int> gpus;
   std::string path;
@@ -168,10 +173,9 @@ int main(int argc, char **argv) {
 
   // create one stream per GPU
   nvtxRangePush("create streams");
-  std::vector<cudaStream_t> streams(gpus.size());
-  for (size_t i = 0; i < gpus.size(); ++i) {
-    CUDA_RUNTIME(cudaSetDevice(gpus[i]));
-    CUDA_RUNTIME(cudaStreamCreate(&streams[i]));
+  std::vector<RcStream> streams;
+  for (auto gpu : gpus) {
+    streams.push_back(RcStream(gpu));
   }
   nvtxRangePop();
 
@@ -188,7 +192,7 @@ int main(int argc, char **argv) {
     auto upperTriangular = [](pangolin::EdgeTy<uint64_t> e) {
       return e.first < e.second;
     };
-    auto csr = pangolin::COO<uint64_t>::from_edges(edges.begin(), edges.end(),
+    auto csr = pangolin::CSRCOO<uint64_t>::from_edges(edges.begin(), edges.end(),
                                                    upperTriangular);
     nvtxRangePop();
     LOG(debug, "nnz = {}", csr.nnz());
@@ -225,7 +229,7 @@ int main(int argc, char **argv) {
 #pragma omp parallel for
     for (size_t gpuIdx = 0; gpuIdx < gpus.size(); ++gpuIdx) {
       const int gpu = gpus[gpuIdx];
-      cudaStream_t stream = streams[gpuIdx];
+      RcStream &stream = streams[gpuIdx];
       CUDA_RUNTIME(cudaSetDevice(gpu));
 
       // prefetch
@@ -233,7 +237,7 @@ int main(int argc, char **argv) {
         LOG(debug, "omp thread {}: prefetch csr to device {}",
             omp_get_thread_num(), gpu);
         nvtxRangePush("prefetch");
-        csr.prefetch_async(gpu, stream);
+        csr.prefetch_async(gpu, stream.stream());
         nvtxRangePop();
       }
 
@@ -274,10 +278,6 @@ int main(int argc, char **argv) {
     nnz = csr.nnz();
 
   } // iters
-
-  for (auto stream : streams) {
-    CUDA_RUNTIME(cudaStreamDestroy(stream));
-  }
 
   std::cout << path << ",\t" << nnz << ",\t" << tris;
   for (const auto &t : times) {

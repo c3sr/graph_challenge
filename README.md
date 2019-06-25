@@ -44,7 +44,6 @@ To speed up I/O, it is recommended to convert the graphs to a binary format
 python graph-datasets/tools/convert.py ~/graphs/graphtsv -t bel
 ```
 
-
 ## Citing
 
 Our 2018 submission may be cited with the following bibtex entry

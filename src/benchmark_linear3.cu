@@ -234,11 +234,11 @@ int main(int argc, char **argv) {
   // create a queue for each numa region that has a GPU. A single producer will
   // read from disk and insert edges into multiple consumer queues
   std::map<int, pangolin::BoundedBuffer<Edge64>> NUMAToQueue;
-  std::map<int, pangolin::COO<Index64>> NUMAToCSR;
+  std::map<int, pangolin::CSRCOO<Index64>> NUMAToCSR;
   for (auto &kv : NUMAToGPUs) {
     int numa = kv.first;
     NUMAToQueue.insert(std::make_pair(numa, BoundedBuffer<Edge64>()));
-    NUMAToCSR.insert(std::make_pair(numa, pangolin::COO<Index64>()));
+    NUMAToCSR.insert(std::make_pair(numa, pangolin::CSRCOO<Index64>()));
   }
 
   // read data / build
@@ -256,7 +256,7 @@ int main(int argc, char **argv) {
     LOG(debug, "start mat builder for numa {}", numa);
     auto &queue = kv.second;
     auto &csr = NUMAToCSR[numa];
-    builders.push_back(std::thread(consume<pangolin::COO<Index64>, Edge64>,
+    builders.push_back(std::thread(consume<pangolin::CSRCOO<Index64>, Edge64>,
                                    numa, std::ref(queue), std::ref(csr)));
   }
 

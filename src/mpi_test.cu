@@ -2,10 +2,13 @@
 #include <mpi.h>
 #endif
 
-#include "pangolin/pangolin.cuh"
-#include "pangolin/pangolin.hpp"
+#include "pangolin/algorithm/fill.cuh"
+#include "pangolin/dense/buffer.cuh"
+#include "pangolin/init.hpp"
 
 int main(int argc, char **argv) {
+  pangolin::init();
+
 #if PANGOLIN_USE_MPI == 1
   // Initialize the MPI environment
   MPI_Init(&argc, &argv);
@@ -41,10 +44,9 @@ int main(int argc, char **argv) {
   MPI_Finalize();
   return 0;
 #else
-  (void) argc;
-  (void) argv;
+  (void)argc;
+  (void)argv;
   printf("pangolin not compiled with MPI support, or MPI not found\n");
   return -1;
 #endif
-
 }

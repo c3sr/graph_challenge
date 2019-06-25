@@ -10,13 +10,18 @@ Simultaneously read and build the GPU implementation with a queue of edges.
 #include <thread>
 #include <vector>
 
+#include <clara/clara.hpp>
 #include <fmt/format.h>
 
 #include <nvToolsExt.h>
 
-#include "clara/clara.hpp"
-#include "pangolin/pangolin.cuh"
-#include "pangolin/pangolin.hpp"
+#include "pangolin/algorithm/tc_edge_linear.cuh"
+#include "pangolin/bounded_buffer.hpp"
+#include "pangolin/configure.hpp"
+#include "pangolin/file/edge_list_file.hpp"
+#include "pangolin/init.hpp"
+#include "pangolin/sparse/csr_coo.hpp"
+#include "pangolin/cuda_cxx/rc_stream.hpp"
 
 using pangolin::BoundedBuffer;
 
@@ -113,6 +118,7 @@ struct RunOptions {
   bool readMostly;
   bool accessedBy;
   bool prefetchAsync;
+  bool preCountBarrier;
 };
 
 void print_header(const RunOptions &opts) {
@@ -137,11 +143,18 @@ void print_header(const RunOptions &opts) {
 
 template <typename Index> int run(RunOptions &opts) {
   typedef pangolin::EdgeTy<Index> Edge;
+  using pangolin::RcStream;
 
   std::vector<int> gpus = opts.gpus;
   if (gpus.empty()) {
     LOG(warn, "no GPUs provided on command line, using GPU 0");
     gpus.push_back(0);
+  }
+
+  // create a stream for each GPU
+  std::vector<RcStream> streams;
+  for (const auto &gpu : gpus) {
+    streams.push_back(RcStream(gpu));
   }
 
   // Check for unified memory support
@@ -193,14 +206,14 @@ template <typename Index> int run(RunOptions &opts) {
   auto start = std::chrono::system_clock::now();
 
   Buffer<std::vector<Edge>> queue;
-  pangolin::COO<Index> csr;
+  pangolin::CSRCOO<Index> csr;
   // start a thread to read the matrix data
   LOG(debug, "start disk reader");
   std::thread reader(produce<Edge>, opts.path, std::ref(queue));
 
   // start a thread to build the matrix
   LOG(debug, "start csr build");
-  std::thread builder(consume<pangolin::COO<Index>>, std::ref(queue), std::ref(csr));
+  std::thread builder(consume<pangolin::CSRCOO<Index>>, std::ref(queue), std::ref(csr));
   // consume(queue, csr, &readerActive);
 
   LOG(debug, "waiting for disk reader...");
@@ -229,10 +242,6 @@ template <typename Index> int run(RunOptions &opts) {
     start = std::chrono::system_clock::now();
     if (opts.readMostly) {
       csr.read_mostly();
-      for (const auto &gpu : gpus) {
-        CUDA_RUNTIME(cudaSetDevice(gpu));
-        CUDA_RUNTIME(cudaDeviceSynchronize());
-      }
     }
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
     nvtxRangePop();
@@ -258,8 +267,10 @@ template <typename Index> int run(RunOptions &opts) {
     nvtxRangePush("prefetch");
     start = std::chrono::system_clock::now();
     if (opts.prefetchAsync) {
-      for (const auto &gpu : gpus) {
-        csr.prefetch_async(gpu);
+      for (size_t gpuIdx = 0; gpuIdx < gpus.size(); ++gpuIdx) {
+        auto &gpu = gpus[gpuIdx];
+        cudaStream_t stream = streams[gpuIdx].stream();
+        csr.prefetch_async(gpu, stream);
         CUDA_RUNTIME(cudaSetDevice(gpu));
         CUDA_RUNTIME(cudaDeviceSynchronize());
       }
@@ -269,15 +280,24 @@ template <typename Index> int run(RunOptions &opts) {
     LOG(info, "prefetch CSR time {}s", elapsed);
     prefetchTimes.push_back(elapsed);
 
+    if (opts.preCountBarrier) {
+      LOG(debug, "sync streams");
+      for (auto stream : streams) {
+        stream.sync();
+      }
+    }
+
     // count triangles
     nvtxRangePush("count");
     start = std::chrono::system_clock::now();
 
     // create async counters
     std::vector<pangolin::LinearTC> counters;
-    for (int dev : gpus) {
+    for (size_t gpuIdx = 0 ; gpuIdx < gpus.size(); ++gpuIdx) {
+      auto dev = gpus[gpuIdx];
+      auto &stream = streams[gpuIdx];
       LOG(debug, "create device {} counter", dev);
-      counters.push_back(pangolin::LinearTC(dev));
+      counters.push_back(pangolin::LinearTC(dev, stream));
     }
 
     // determine the number of edges per gpu
@@ -345,7 +365,7 @@ int main(int argc, char **argv) {
   opts.prefetchAsync = false;
   opts.blockSize = 256;
   opts.sep = ",";
-
+  opts.preCountBarrier = false;
 
   clara::Parser cli;
   cli = cli | clara::Help(help);
@@ -359,6 +379,7 @@ int main(int argc, char **argv) {
   cli = cli | clara::Opt(opts.prefetchAsync)["--prefetch-async"]("prefetch data to all GPUs before kernel");
   cli = cli | clara::Opt(opts.iters, "N")["-n"]("number of counts");
   cli = cli | clara::Opt(opts.blockSize, "N")["--bs"]("block size for counting kernel");
+  cli = cli | clara::Opt(opts.preCountBarrier)["--barrier"]("barrier before count kernels");
   cli = cli | clara::Arg(opts.path, "graph file")("Path to adjacency list").required();
 
   auto result = cli.parse(clara::Args(argc, argv));
