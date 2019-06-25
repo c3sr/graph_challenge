@@ -116,7 +116,7 @@ int main(int argc, char **argv) {
   auto upperTriangular = [](pangolin::EdgeTy<uint64_t> e) {
     return e.first < e.second;
   };
-  auto csr = pangolin::COO<uint64_t>::from_edges(edges.begin(), edges.end(),
+  auto csr = pangolin::CSRCOO<uint64_t>::from_edges(edges.begin(), edges.end(),
                                                  upperTriangular);
   LOG(debug, "nnz = {}", csr.nnz());
   elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
