@@ -18,10 +18,10 @@ Simultaneously read and build the GPU implementation with a queue of edges.
 #include "pangolin/algorithm/tc_edge_linear.cuh"
 #include "pangolin/bounded_buffer.hpp"
 #include "pangolin/configure.hpp"
+#include "pangolin/cuda_cxx/rc_stream.hpp"
 #include "pangolin/file/edge_list_file.hpp"
 #include "pangolin/init.hpp"
 #include "pangolin/sparse/csr_coo.hpp"
-#include "pangolin/cuda_cxx/rc_stream.hpp"
 
 using pangolin::BoundedBuffer;
 
@@ -205,7 +205,7 @@ template <typename Index> int run(RunOptions &opts) {
   for (auto gpu : gpus) {
     gpuStr += std::to_string(gpu);
   }
-  fmt::print("{}{}",opts.sep, gpuStr);
+  fmt::print("{}{}", opts.sep, gpuStr);
 
   // read data / build
   auto start = std::chrono::system_clock::now();
@@ -236,7 +236,8 @@ template <typename Index> int run(RunOptions &opts) {
   fmt::print("{}{}", opts.sep, csr.num_rows());
 
   // count `iters` times
-  std::vector<double> times;
+  std::vector<double> kernelTimes;
+  std::vector<double> countTimes;
   std::vector<uint64_t> tris;
   std::vector<double> readMostlyTimes;
   std::vector<double> accessedByTimes;
@@ -298,7 +299,7 @@ template <typename Index> int run(RunOptions &opts) {
 
     // create async counters
     std::vector<pangolin::LinearTC> counters;
-    for (size_t gpuIdx = 0 ; gpuIdx < gpus.size(); ++gpuIdx) {
+    for (size_t gpuIdx = 0; gpuIdx < gpus.size(); ++gpuIdx) {
       auto dev = gpus[gpuIdx];
       auto &stream = streams[gpuIdx];
       LOG(debug, "create device {} counter", dev);
@@ -331,8 +332,11 @@ template <typename Index> int run(RunOptions &opts) {
     nvtxRangePop();
     LOG(info, "count time {}s", elapsed);
     LOG(info, "{} triangles ({} teps)", total, csr.nnz() / elapsed);
-    times.push_back(elapsed);
+    countTimes.push_back(elapsed);
     tris.push_back(total);
+    if (gpus.size() == 1) {
+      kernelTimes.push_back(counters[0].get_kernel_ms());
+    }
   }
 
   if (opts.iters > 0) {
@@ -341,8 +345,8 @@ template <typename Index> int run(RunOptions &opts) {
     print_vec(readMostlyTimes, opts.sep);
     print_vec(accessedByTimes, opts.sep);
     print_vec(prefetchTimes, opts.sep);
-    print_vec(times, opts.sep);
-    for (const auto &s : times) {
+    print_vec(countTimes, opts.sep);
+    for (const auto &s : countTimes) {
       fmt::print("{}{}", opts.sep, csr.nnz() / s);
     }
   }
