@@ -4,14 +4,20 @@ Count triangles using warp-granularity dynamic algorithm selection
 
 */
 
-#include <fmt/format.h>
 #include <iostream>
 
 #include <nvToolsExt.h>
 
 #include "clara/clara.hpp"
-#include "pangolin/pangolin.cuh"
-#include "pangolin/pangolin.hpp"
+#include <fmt/format.h>
+
+#include "pangolin/algorithm/tc_edge_dyn.cuh"
+#include "pangolin/bounded_buffer.hpp"
+#include "pangolin/configure.hpp"
+#include "pangolin/cuda_cxx/rc_stream.hpp"
+#include "pangolin/file/edge_list_file.hpp"
+#include "pangolin/init.hpp"
+#include "pangolin/sparse/csr_coo.hpp"
 
 struct RunOptions {
   std::vector<int> gpus;
