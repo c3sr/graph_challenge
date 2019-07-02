@@ -124,19 +124,16 @@ struct RunOptions {
 void print_header(const RunOptions &opts) {
   fmt::print("benchmark{0}bs{0}gpus{0}graph{0}nodes{0}edges{0}tris", opts.sep);
   for (auto i = 0; i < opts.iters; ++i) {
-    fmt::print("{}readMostly{}", opts.sep, i);
-  }
-  for (auto i = 0; i < opts.iters; ++i) {
-    fmt::print("{}accessedBy{}", opts.sep, i);
-  }
-  for (auto i = 0; i < opts.iters; ++i) {
-    fmt::print("{}prefetch{}", opts.sep, i);
-  }
-  for (auto i = 0; i < opts.iters; ++i) {
     fmt::print("{}time{}", opts.sep, i);
   }
   for (auto i = 0; i < opts.iters; ++i) {
     fmt::print("{}teps{}", opts.sep, i);
+  }
+  for (auto i = 0; i < opts.iters; ++i) {
+    fmt::print("{}kernel_time{}", opts.sep, i);
+  }
+  for (auto i = 0; i < opts.iters; ++i) {
+    fmt::print("{}kernel_teps{}", opts.sep, i);
   }
   fmt::print("\n");
 }
@@ -199,14 +196,6 @@ template <typename Index> int run(RunOptions &opts) {
     }
   }
 
-  fmt::print("linear-io-queue");
-  fmt::print("{}{}", opts.sep, opts.blockSize);
-  std::string gpuStr;
-  for (auto gpu : gpus) {
-    gpuStr += std::to_string(gpu);
-  }
-  fmt::print("{}{}", opts.sep, gpuStr);
-
   // read data / build
   auto start = std::chrono::system_clock::now();
 
@@ -231,27 +220,19 @@ template <typename Index> int run(RunOptions &opts) {
   LOG(info, "read_data/build time {}s", elapsed);
   LOG(debug, "CSR: nnz = {}, rows = {}", csr.nnz(), csr.num_rows());
 
-  fmt::print("{}{}", opts.sep, opts.path);
-  fmt::print("{}{}", opts.sep, csr.nnz());
-  fmt::print("{}{}", opts.sep, csr.num_rows());
-
   // count `iters` times
   std::vector<double> kernelTimes;
   std::vector<double> countTimes;
   std::vector<uint64_t> tris;
-  std::vector<double> readMostlyTimes;
-  std::vector<double> accessedByTimes;
-  std::vector<double> prefetchTimes;
   for (int i = 0; i < opts.iters; ++i) {
     // read-mostly
     nvtxRangePush("read-mostly");
-    start = std::chrono::system_clock::now();
+    const auto hintStart = std::chrono::system_clock::now();
     if (opts.readMostly) {
       csr.read_mostly();
     }
-    elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
+    elapsed = (std::chrono::system_clock::now() - hintStart).count() / 1e9;
     nvtxRangePop();
-    readMostlyTimes.push_back(elapsed);
     LOG(info, "read-mostly CSR time {}s", elapsed);
 
     // accessed-by
@@ -260,14 +241,11 @@ template <typename Index> int run(RunOptions &opts) {
     if (opts.accessedBy) {
       for (const auto &gpu : gpus) {
         csr.accessed_by(gpu);
-        CUDA_RUNTIME(cudaSetDevice(gpu));
-        CUDA_RUNTIME(cudaDeviceSynchronize());
       }
     }
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
     nvtxRangePop();
     LOG(info, "accessed-by CSR time {}s", elapsed);
-    accessedByTimes.push_back(elapsed);
 
     // prefetch
     nvtxRangePush("prefetch");
@@ -277,17 +255,14 @@ template <typename Index> int run(RunOptions &opts) {
         auto &gpu = gpus[gpuIdx];
         cudaStream_t stream = streams[gpuIdx].stream();
         csr.prefetch_async(gpu, stream);
-        CUDA_RUNTIME(cudaSetDevice(gpu));
-        CUDA_RUNTIME(cudaDeviceSynchronize());
       }
     }
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
     nvtxRangePop();
     LOG(info, "prefetch CSR time {}s", elapsed);
-    prefetchTimes.push_back(elapsed);
 
     if (opts.preCountBarrier) {
-      LOG(debug, "sync streams");
+      LOG(debug, "sync streams after hints");
       for (auto stream : streams) {
         stream.sync();
       }
@@ -328,25 +303,36 @@ template <typename Index> int run(RunOptions &opts) {
       total += counter.count();
     }
 
-    elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
+    elapsed = (std::chrono::system_clock::now() - hintStart).count() / 1e9;
     nvtxRangePop();
     LOG(info, "count time {}s", elapsed);
     LOG(info, "{} triangles ({} teps)", total, csr.nnz() / elapsed);
     countTimes.push_back(elapsed);
     tris.push_back(total);
     if (gpus.size() == 1) {
-      kernelTimes.push_back(counters[0].get_kernel_ms());
+      kernelTimes.push_back(counters[0].kernel_time());
     }
   }
 
   if (opts.iters > 0) {
+    fmt::print("linear-io-queue");
+    fmt::print("{}{}", opts.sep, opts.blockSize);
+    std::string gpuStr;
+    for (auto gpu : gpus) {
+      gpuStr += std::to_string(gpu);
+    }
+    fmt::print("{}{}", opts.sep, gpuStr);
+    fmt::print("{}{}", opts.sep, opts.path);
+    fmt::print("{}{}", opts.sep, csr.nnz());
+    fmt::print("{}{}", opts.sep, csr.num_rows());
     fmt::print("{}{}", opts.sep, tris[0]);
 
-    print_vec(readMostlyTimes, opts.sep);
-    print_vec(accessedByTimes, opts.sep);
-    print_vec(prefetchTimes, opts.sep);
     print_vec(countTimes, opts.sep);
     for (const auto &s : countTimes) {
+      fmt::print("{}{}", opts.sep, csr.nnz() / s);
+    }
+    print_vec(kernelTimes, opts.sep);
+    for (const auto &s : kernelTimes) {
       fmt::print("{}{}", opts.sep, csr.nnz() / s);
     }
   }
@@ -374,7 +360,7 @@ int main(int argc, char **argv) {
   opts.prefetchAsync = false;
   opts.blockSize = 256;
   opts.sep = ",";
-  opts.preCountBarrier = false;
+  opts.preCountBarrier = true;
 
   clara::Parser cli;
   cli = cli | clara::Help(help);
