@@ -12,10 +12,10 @@ src/pangolin-version >> $EXPERIMENT_DIR/version.txt
 
 FLAGS="-g 0 --prefetch-async --debug -n 5"
 
+src/benchmark-dyn $FLAGS --header >> $EXPERIMENT_DIR/run.csv 2>>$EXPERIMENT_DIR/run.log
 for g in $GRAPH_DIR/*.bel; do
-    for bs in 32 64 128 256 512; do
-        echo $bs $g
-        echo -ne $bs,'\t' >> $EXPERIMENT_DIR/run.csv
-        src/benchmark-dyn $FLAGS $g >> $EXPERIMENT_DIR/run.csv 2>>$EXPERIMENT_DIR/run.log
+    for sb in 0 0.25 0.5 1 2 1e10; do
+        echo $g $sb
+        src/benchmark-dyn $FLAGS --scale-binary $sb $g >> $EXPERIMENT_DIR/run.csv 2>>$EXPERIMENT_DIR/run.log
     done
 done

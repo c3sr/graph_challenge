@@ -22,6 +22,7 @@ struct RunOptions {
   bool prefetchAsync;
   int dimBlock;
   int iters;
+  float scaleBinary;
 };
 
 template <typename V> void print_vec(const V &vec, const std::string &sep) {
@@ -31,13 +32,19 @@ template <typename V> void print_vec(const V &vec, const std::string &sep) {
 }
 
 void print_header(RunOptions &opts) {
-  fmt::print("dyn{0}bs{0}graph{0}nodes{0}edges{0}tris", opts.sep);
+  fmt::print("bmark{0}bs{0}sb{0}graph{0}nodes{0}edges{0}tris", opts.sep);
 
   for (int i = 0; i < opts.iters; ++i) {
     fmt::print("{}time{}", opts.sep, i);
   }
   for (int i = 0; i < opts.iters; ++i) {
     fmt::print("{}teps{}", opts.sep, i);
+  }
+  for (int i = 0; i < opts.iters; ++i) {
+    fmt::print("{}kernel_time{}", opts.sep, i);
+  }
+  for (int i = 0; i < opts.iters; ++i) {
+    fmt::print("{}kernel_teps{}", opts.sep, i);
   }
   fmt::print("\n");
 }
@@ -66,6 +73,7 @@ template <typename Index> int run(RunOptions &opts) {
 
   // create csr and count `iters` times
   std::vector<double> times;
+  std::vector<double> kernelTimes;
   uint64_t nodes;
   uint64_t tris;
   uint64_t nnz;
@@ -79,13 +87,9 @@ template <typename Index> int run(RunOptions &opts) {
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
     LOG(info, "create CSR time {}s", elapsed);
 
-    fmt::print("dyn");
-    fmt::print("{}{}", opts.sep, opts.dimBlock);
-    fmt::print("{}{}", opts.sep, opts.path);
-
     // read-mostly
     nvtxRangePush("read-mostly");
-    start = std::chrono::system_clock::now();
+    const auto startHints = std::chrono::system_clock::now();
     if (opts.readMostly) {
       adj.read_mostly();
       for (const auto &gpu : gpus) {
@@ -93,7 +97,7 @@ template <typename Index> int run(RunOptions &opts) {
         CUDA_RUNTIME(cudaDeviceSynchronize());
       }
     }
-    elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
+    elapsed = (std::chrono::system_clock::now() - startHints).count() / 1e9;
     nvtxRangePop();
     LOG(info, "read-mostly CSR time {}s", elapsed);
 
@@ -121,15 +125,16 @@ template <typename Index> int run(RunOptions &opts) {
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
     LOG(info, "prefetch CSR time {}s", elapsed);
 
-    // count triangles
-    start = std::chrono::system_clock::now();
-
     // create async counters
+    start = std::chrono::system_clock::now();
     std::vector<pangolin::EdgeWarpDynTC> counters;
+    LOG(debug, "binary cost scaling: {}", opts.scaleBinary);
     for (int dev : gpus) {
       LOG(debug, "create device {} counter", dev);
-      counters.push_back(std::move(pangolin::EdgeWarpDynTC(dev)));
+      counters.push_back(std::move(pangolin::EdgeWarpDynTC(dev, opts.scaleBinary)));
     }
+    elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
+    LOG(info, "counter ctor time {}s", elapsed);
 
     // determine the number of edges per gpu
     const size_t edgesPerGPU = (adj.nnz() + gpus.size() - 1) / gpus.size();
@@ -153,25 +158,38 @@ template <typename Index> int run(RunOptions &opts) {
       total += counter.count();
     }
 
-    elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
-    LOG(info, "count time {}s", elapsed);
+    elapsed = (std::chrono::system_clock::now() - startHints).count() / 1e9;
     LOG(info, "{} triangles ({} teps)", total, adj.nnz() / elapsed);
+    LOG(info, "count time: {}s", elapsed);
     for (auto &counter : counters) {
-      LOG(debug, "GPU {} kernel time: {}", counter.device(), counter.kernel_time());
+      LOG(info, "GPU {} kernel time: {}", counter.device(), counter.kernel_time());
     }
     times.push_back(elapsed);
+    if (counters.size() == 1) {
+      kernelTimes.push_back(counters[0].kernel_time());
+    } else {
+      kernelTimes.push_back(0);
+    }
     nodes = adj.num_rows();
     nnz = adj.nnz();
     tris = total;
   }
 
   if (opts.iters > 0) {
+    fmt::print("dyn");
+    fmt::print("{}{}", opts.sep, opts.dimBlock);
+    fmt::print("{}{}", opts.sep, opts.scaleBinary);
+    fmt::print("{}{}", opts.sep, opts.path);
     fmt::print("{}{}", opts.sep, nodes);
     fmt::print("{}{}", opts.sep, nnz);
     fmt::print("{}{}", opts.sep, tris);
 
     print_vec(times, opts.sep);
     for (const auto &s : times) {
+      fmt::print("{}{}", opts.sep, nnz / s);
+    }
+    print_vec(kernelTimes, opts.sep);
+    for (const auto &s : kernelTimes) {
       fmt::print("{}{}", opts.sep, nnz / s);
     }
   }
@@ -188,6 +206,7 @@ int main(int argc, char **argv) {
   bool help = false;
   bool debug = false;
   bool verbose = false;
+  bool quiet = false;
   bool wide = false;
   bool header = false;
 
@@ -199,11 +218,13 @@ int main(int argc, char **argv) {
   opts.accessedBy = false;
   opts.prefetchAsync = false;
   opts.sep = ",";
+  opts.scaleBinary = 0.25;
 
   clara::Parser cli;
   cli = cli | clara::Help(help);
   cli = cli | clara::Opt(debug)["--debug"]("print debug messages to stderr");
   cli = cli | clara::Opt(verbose)["--verbose"]("print verbose messages to stderr");
+  cli = cli | clara::Opt(quiet)["--quiet"]("only print errors");
   cli = cli | clara::Opt(wide)["--wide"]("64-bit node IDs");
   cli = cli | clara::Opt(header)["--header"]("only print CSV header");
   cli = cli | clara::Opt(opts.gpus, "dev ids")["-g"]("gpus to use");
@@ -212,11 +233,12 @@ int main(int argc, char **argv) {
   cli = cli | clara::Opt(opts.accessedBy)["--accessed-by"]("mark data as accessed-by all GPUs before kernel");
   cli = cli | clara::Opt(opts.prefetchAsync)["--prefetch-async"]("prefetch data to all GPUs before kernel");
   cli = cli | clara::Opt(opts.iters, "N")["-n"]("number of counts");
+  cli = cli | clara::Opt(opts.scaleBinary, "N")["--scale-binary"]("scale binary cost in model");
   cli = cli | clara::Arg(opts.path, "graph file")("Path to adjacency list").required();
 
   auto result = cli.parse(clara::Args(argc, argv));
   if (!result) {
-    LOG(error, "Error in command line: {}", result.errorMessage());
+    LOG(critical, "Error in command line: {}", result.errorMessage());
     exit(1);
   }
 
@@ -230,6 +252,8 @@ int main(int argc, char **argv) {
     pangolin::logger::set_level(pangolin::logger::Level::TRACE);
   } else if (debug) {
     pangolin::logger::set_level(pangolin::logger::Level::DEBUG);
+  } else if (quiet) {
+    pangolin::logger::set_level(pangolin::logger::Level::ERR);
   }
 
   // log command line before much else happens
