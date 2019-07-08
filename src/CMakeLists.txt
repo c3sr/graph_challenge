@@ -47,6 +47,7 @@ add_exe(NAME benchmark-vertex-blocks-cache-block-binary SRCS benchmark_vertex_bl
 add_exe(NAME benchmark-binary SRCS benchmark_binary.cu)
 add_exe(NAME benchmark-bitvector SRCS benchmark_bitvector.cu)
 add_exe(NAME benchmark-dyn SRCS benchmark_dyn.cu)
+add_exe(NAME benchmark-dysel SRCS benchmark_dysel.cu)
 add_exe(NAME benchmark-linear-io-queue SRCS benchmark_linear_io_queue.cu)
 # add_exe(NAME benchmark-linear-io-vec-queue SRCS benchmark_linear_io_vec_queue.cu)
 add_exe(NAME benchmark-linear-mp SRCS benchmark_linear_mp.cu)
