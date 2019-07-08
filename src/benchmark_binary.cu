@@ -21,17 +21,23 @@ struct RunOptions {
   std::string path; //!< path for graph
   std::string sep;  //!< seperator for output
   std::vector<int> gpus;
-  int dimBlock;
+  int blockSize;
   int coarsening;
   int iters;
 
   bool readMostly;
   bool accessedBy;
   bool prefetchAsync;
+  bool shrinkToFit;
 };
 
-template <typename Index> int run(RunOptions &opts) {
+template <typename V> void print_vec(const V &vec, const std::string &sep) {
+  for (const auto &e : vec) {
+    fmt::print("{}{}", sep, e);
+  }
+}
 
+template <typename Index> int run(RunOptions &opts) {
   typedef typename pangolin::EdgeTy<Index> Edge;
 
   auto gpus = opts.gpus;
@@ -71,6 +77,7 @@ template <typename Index> int run(RunOptions &opts) {
 
   uint64_t nnz;
   uint64_t tris;
+  uint64_t numRows;
   // create csr and count `opts.iters` times
   for (int i = 0; i < opts.iters; ++i) {
     auto iterStart = std::chrono::system_clock::now();
@@ -79,8 +86,15 @@ template <typename Index> int run(RunOptions &opts) {
     auto upperTriangularFilter = [](Edge e) { return e.first < e.second; };
     auto lowerTriangularFilter = [](Edge e) { return e.first > e.second; };
     auto csr = pangolin::CSRCOO<uint64_t>::from_edges(edges.begin(), edges.end(), upperTriangularFilter);
-    LOG(debug, "CSR nnz = {} rows = {}", csr.nnz(), csr.num_rows());
+
+    if (opts.shrinkToFit) {
+      LOG(debug, "shrink CSR");
+      csr.shrink_to_fit();
+    }
+
     elapsed = (std::chrono::system_clock::now() - iterStart).count() / 1e9;
+    LOG(debug, "CSR nnz = {} rows = {}", csr.nnz(), csr.num_rows());
+    LOG(debug, "CSR cap = {}MB size = {}MB", csr.capacity_bytes() / 1024 / 1024, csr.size_bytes() / 1024 / 1024);
     LOG(info, "create CSR time {}s", elapsed);
     csrTimes[i] = elapsed;
 
@@ -147,7 +161,7 @@ template <typename Index> int run(RunOptions &opts) {
       const size_t edgeStop = std::min(edgeStart + edgesPerGPU, csr.nnz());
       const size_t numEdges = edgeStop - edgeStart;
       LOG(debug, "start async count on GPU {} ({} edges)", counter.device(), numEdges);
-      counter.count_async(csr.view(), numEdges, edgeStart, opts.dimBlock, opts.coarsening);
+      counter.count_async(csr.view(), numEdges, edgeStart, opts.blockSize, opts.coarsening);
       edgeStart += edgesPerGPU;
     }
 
@@ -169,29 +183,50 @@ template <typename Index> int run(RunOptions &opts) {
     competitionTimes[i] = elapsed;
     elapsed = (countStop - iterStart).count() / 1e9;
     iterationTimes[i] = elapsed;
+    if (counters.size() == 1) {
+      kernelTimes[i] = counters[0].kernel_time();
+    } else {
+      kernelTimes[i] = 0;
+    }
 
     tris = total;
     nnz = csr.nnz();
+    numRows = csr.num_rows();
   }
 
-  std::cout << opts.path << opts.sep << nnz << opts.sep << tris << opts.sep << opts.dimBlock;
-  for (auto t : countTimes) {
-    std::cout << opts.sep << t;
-  }
-  for (auto t : competitionTimes) {
-    std::cout << opts.sep << t;
-  }
-  for (auto t : iterationTimes) {
-    std::cout << opts.sep << t;
-  }
+  if (opts.iters > 0) {
+    fmt::print("binary");
+    fmt::print("{}{}", opts.sep, opts.blockSize);
+    std::string gpuStr;
+    for (auto gpu : gpus) {
+      gpuStr += std::to_string(gpu);
+    }
+    fmt::print("{}{}", opts.sep, gpuStr);
+    fmt::print("{}{}", opts.sep, opts.path);
+    fmt::print("{}{}", opts.sep, numRows);
+    fmt::print("{}{}", opts.sep, nnz);
+    fmt::print("{}{}", opts.sep, tris);
 
-  std::cout << std::endl;
+    print_vec(readMostlyTimes, opts.sep);
+    print_vec(accessedByTimes, opts.sep);
+    print_vec(prefetchTimes, opts.sep);
+
+    print_vec(countTimes, opts.sep);
+    for (const auto &s : countTimes) {
+      fmt::print("{}{}", opts.sep, nnz / s);
+    }
+    print_vec(kernelTimes, opts.sep);
+    for (const auto &s : kernelTimes) {
+      fmt::print("{}{}", opts.sep, nnz / s);
+    }
+    fmt::print("\n");
+  }
 
   return 0;
 }
 
 void print_header(const RunOptions &opts) {
-  fmt::print("benchmark{0}bs{0}graph{0}nodes{0}edges{0}tris", opts.sep);
+  fmt::print("bmark{0}bs{0}graph{0}nodes{0}edges{0}tris", opts.sep);
   for (int i = 0; i < opts.iters; ++i) {
     fmt::print("{}readMostly{}", opts.sep, i);
   }
@@ -202,10 +237,16 @@ void print_header(const RunOptions &opts) {
     fmt::print("{}prefetchAsync{}", opts.sep, i);
   }
   for (int i = 0; i < opts.iters; ++i) {
-    fmt::print("{}count{}", opts.sep, i);
+    fmt::print("{}time{}", opts.sep, i);
   }
   for (int i = 0; i < opts.iters; ++i) {
-    fmt::print("{}count_teps{}", opts.sep, i);
+    fmt::print("{}teps{}", opts.sep, i);
+  }
+  for (int i = 0; i < opts.iters; ++i) {
+    fmt::print("{}kernel_time{}", opts.sep, i);
+  }
+  for (int i = 0; i < opts.iters; ++i) {
+    fmt::print("{}kernel_teps{}", opts.sep, i);
   }
   fmt::print("\n");
 }
@@ -216,9 +257,10 @@ int main(int argc, char **argv) {
 
   RunOptions opts;
   opts.sep = ",";
-  opts.dimBlock = 512;
+  opts.blockSize = 512;
   opts.coarsening = 1;
   opts.iters = 1;
+  opts.shrinkToFit = false;
   opts.readMostly = false;
   opts.accessedBy = false;
   opts.prefetchAsync = false;
@@ -237,7 +279,8 @@ int main(int argc, char **argv) {
   cli = cli | clara::Opt(wide)["--wide"]("64-bit node IDs");
   cli = cli | clara::Opt(opts.gpus, "dev ids")["-g"]("gpus to use");
   cli = cli | clara::Opt(opts.coarsening, "coarsening")["-c"]("Number of elements per thread");
-  cli = cli | clara::Opt(opts.dimBlock, "block-dim")["--bs"]("Number of threads in a block");
+  cli = cli | clara::Opt(opts.blockSize, "block-dim")["--bs"]("Number of threads in a block");
+  cli = cli | clara::Opt(opts.shrinkToFit)["--shrink-to-fit"]("shrink allocations to fit data");
   cli = cli | clara::Opt(opts.readMostly)["--read-mostly"]("mark data as read-mostly by all gpus before kernel");
   cli = cli | clara::Opt(opts.accessedBy)["--accessed-by"]("mark data as accessed-by all GPUs before kernel");
   cli = cli | clara::Opt(opts.prefetchAsync)["--prefetch-async"]("prefetch data to all GPUs before kernel");
