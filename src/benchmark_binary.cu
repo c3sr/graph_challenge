@@ -85,7 +85,7 @@ template <typename Index> int run(RunOptions &opts) {
     // create csr
     auto upperTriangularFilter = [](Edge e) { return e.first < e.second; };
     auto lowerTriangularFilter = [](Edge e) { return e.first > e.second; };
-    auto csr = pangolin::CSRCOO<uint64_t>::from_edges(edges.begin(), edges.end(), upperTriangularFilter);
+    auto csr = pangolin::CSRCOO<Index>::from_edges(edges.begin(), edges.end(), upperTriangularFilter);
 
     if (opts.shrinkToFit) {
       LOG(debug, "shrink CSR");
@@ -226,7 +226,7 @@ template <typename Index> int run(RunOptions &opts) {
 }
 
 void print_header(const RunOptions &opts) {
-  fmt::print("bmark{0}bs{0}graph{0}nodes{0}edges{0}tris", opts.sep);
+  fmt::print("bmark{0}bs{0}gpus{0}graph{0}nodes{0}edges{0}tris", opts.sep);
   for (int i = 0; i < opts.iters; ++i) {
     fmt::print("{}readMostly{}", opts.sep, i);
   }
