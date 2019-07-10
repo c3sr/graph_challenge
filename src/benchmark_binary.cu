@@ -84,7 +84,7 @@ template <typename Index> int run(RunOptions &opts) {
     auto competitionStart = std::chrono::system_clock::now();
     // create csr
     auto upperTriangularFilter = [](Edge e) { return e.first < e.second; };
-    auto lowerTriangularFilter = [](Edge e) { return e.first > e.second; };
+    // auto lowerTriangularFilter = [](Edge e) { return e.first > e.second; };
     auto csr = pangolin::CSRCOO<Index>::from_edges(edges.begin(), edges.end(), upperTriangularFilter);
 
     if (opts.shrinkToFit) {
@@ -176,8 +176,13 @@ template <typename Index> int run(RunOptions &opts) {
     const auto countStop = std::chrono::system_clock::now();
 
     elapsed = (countStop - countStart).count() / 1e9;
-    LOG(info, "count time {}s", elapsed);
-    LOG(info, "{} triangles ({} teps)", total, csr.nnz() / elapsed);
+    for (auto &counter : counters) {
+      double secs = counter.kernel_time();
+      int dev = counter.device();
+      LOG(info, "gpu {} kernel time {}s ({} teps)", dev, secs, csr.nnz() / secs);
+    }
+    LOG(info, "count time {}s ({} teps)", elapsed, csr.nnz() / elapsed);
+    LOG(info, "{} triangles", total);
     countTimes[i] = elapsed;
     elapsed = (countStop - competitionStart).count() / 1e9;
     competitionTimes[i] = elapsed;
