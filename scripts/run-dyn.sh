@@ -3,7 +3,7 @@
 set -eou pipefail
 
 GRAPH_DIR=$1
-EXPERIMENT_DIR=`date +%Y%m%d-%H%M%S`_dyn
+EXPERIMENT_DIR=`date +%Y%m%d-%H%M%S`_dyn_`hostname`
 
 echo $EXPERIMENT_DIR
 mkdir -p $EXPERIMENT_DIR
