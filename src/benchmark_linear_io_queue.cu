@@ -323,8 +323,8 @@ template <typename Index> int run(RunOptions &opts) {
     }
     fmt::print("{}{}", opts.sep, gpuStr);
     fmt::print("{}{}", opts.sep, opts.path);
-    fmt::print("{}{}", opts.sep, csr.nnz());
     fmt::print("{}{}", opts.sep, csr.num_rows());
+    fmt::print("{}{}", opts.sep, csr.nnz());
     fmt::print("{}{}", opts.sep, tris[0]);
 
     print_vec(countTimes, opts.sep);
