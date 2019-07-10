@@ -309,8 +309,8 @@ template <typename Index> int run(RunOptions &opts) {
     }
     fmt::print("{}{}", opts.sep, gpuStr);
     fmt::print("{}{}", opts.sep, opts.path);
-    fmt::print("{}{}", opts.sep, nnz);
     fmt::print("{}{}", opts.sep, numRows);
+    fmt::print("{}{}", opts.sep, nnz);
 
     print_vec(totalTimes, opts.sep);
     print_vec(ioTimes, opts.sep);
