@@ -132,7 +132,7 @@ struct RunOptions {
 };
 
 void print_header(const RunOptions &opts) {
-  fmt::print("bmark{0}gpus{0}graph{0}nodes{0}edges{0}", opts.sep);
+  fmt::print("bmark{0}gpus{0}graph{0}nodes{0}edges", opts.sep);
   for (auto i = 0; i < opts.iters; ++i) {
     fmt::print("{}total_time{}", opts.sep, i);
   }
