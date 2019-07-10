@@ -140,13 +140,7 @@ void print_header(const RunOptions &opts) {
     fmt::print("{}io_time{}", opts.sep, i);
   }
   for (auto i = 0; i < opts.iters; ++i) {
-    fmt::print("{}readmostly_time{}", opts.sep, i);
-  }
-  for (auto i = 0; i < opts.iters; ++i) {
-    fmt::print("{}accessedby_time{}", opts.sep, i);
-  }
-  for (auto i = 0; i < opts.iters; ++i) {
-    fmt::print("{}prefetch_time{}", opts.sep, i);
+    fmt::print("{}hint_time{}", opts.sep, i);
   }
   fmt::print("\n");
 }
@@ -184,7 +178,7 @@ template <typename Index> void build_sequential(pangolin::CSRCOO<Index> &csr, do
 
   std::vector<Edge> edges;
   std::vector<Edge> fileEdges;
-  while (file.get_edges(fileEdges, 500)) {
+  while (file.get_edges(fileEdges, 1000)) {
     edges.insert(edges.end(), fileEdges.begin(), fileEdges.end());
   }
   ioTime = (std::chrono::system_clock::now() - start).count() / 1e9;
@@ -200,9 +194,7 @@ template <typename Index> int run(RunOptions &opts) {
   // times to report
   std::vector<double> totalTimes;
   std::vector<double> ioTimes;
-  std::vector<double> readMostlyTimes;
-  std::vector<double> accessedByTimes;
-  std::vector<double> prefetchAsyncTimes;
+  std::vector<double> hintTimes;
 
   // other things to report
   uint64_t numRows;
@@ -244,28 +236,20 @@ template <typename Index> int run(RunOptions &opts) {
 
     ioTimes.push_back(ioTime);
 
+    auto hintStart = std::chrono::system_clock::now();
     // read-mostly
-    auto start = std::chrono::system_clock::now();
     if (opts.readMostly) {
       csr.read_mostly();
     }
-    double elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
-    LOG(info, "read-mostly CSR time {}s", elapsed);
-    readMostlyTimes.push_back(elapsed);
 
     // accessed-by
-    start = std::chrono::system_clock::now();
     if (opts.accessedBy) {
       for (const auto &gpu : gpus) {
         csr.accessed_by(gpu);
       }
     }
-    elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
-    LOG(info, "accessed-by CSR time {}s", elapsed);
-    accessedByTimes.push_back(elapsed);
 
     // prefetch
-    start = std::chrono::system_clock::now();
     if (opts.prefetchAsync) {
       for (size_t gpuIdx = 0; gpuIdx < gpus.size(); ++gpuIdx) {
         auto &gpu = gpus[gpuIdx];
@@ -273,9 +257,6 @@ template <typename Index> int run(RunOptions &opts) {
         csr.prefetch_async(gpu, stream);
       }
     }
-    elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
-    LOG(info, "prefetch CSR time {}s", elapsed);
-    prefetchAsyncTimes.push_back(elapsed);
 
     if (opts.readMostly || opts.accessedBy || opts.prefetchAsync) {
       LOG(debug, "sync streams after hints");
@@ -284,7 +265,12 @@ template <typename Index> int run(RunOptions &opts) {
       }
     }
 
-    elapsed = (std::chrono::system_clock::now() - iterStart).count() / 1e9;
+    auto hintStop = std::chrono::system_clock::now();
+    auto elapsed = (hintStop - hintStart).count() / 1e9;
+    LOG(info, "hint CSR time {}s", elapsed);
+    hintTimes.push_back(elapsed);
+
+    elapsed = (hintStop - iterStart).count() / 1e9;
     totalTimes.push_back(elapsed);
   }
 
@@ -314,9 +300,7 @@ template <typename Index> int run(RunOptions &opts) {
 
     print_vec(totalTimes, opts.sep);
     print_vec(ioTimes, opts.sep);
-    print_vec(readMostlyTimes, opts.sep);
-    print_vec(accessedByTimes, opts.sep);
-    print_vec(prefetchAsyncTimes, opts.sep);
+    print_vec(hintTimes, opts.sep);
   }
   fmt::print("\n");
 
