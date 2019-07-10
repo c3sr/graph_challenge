@@ -46,7 +46,7 @@ template <typename Edge> void produce(const std::string path, Buffer<std::vector
 
   while (true) {
     auto readStart = std::chrono::system_clock::now();
-    size_t readCount = file.get_edges(edges, 500);
+    size_t readCount = file.get_edges(edges, 1000);
     auto readEnd = std::chrono::system_clock::now();
     times.work += (readEnd - readStart).count() / 1e9;
     SPDLOG_TRACE(pangolin::logger::console(), "reader: read {} edges", edges.size());
@@ -116,7 +116,7 @@ void consume(Buffer<std::vector<typename Mat::edge_type>> &queue, Mat &mat, Work
   LOG(debug, "builder: {}s csr {}s blocked", times.work, times.wait);
 }
 
-enum class Type { SEQUENTIAL, OVERLAPPED, NONE };
+enum class Type { SEQUENTIAL, OVERLAPPED};
 
 struct RunOptions {
   int iters;
@@ -245,18 +245,15 @@ template <typename Index> int run(RunOptions &opts) {
     ioTimes.push_back(ioTime);
 
     // read-mostly
-    nvtxRangePush("read-mostly");
     auto start = std::chrono::system_clock::now();
     if (opts.readMostly) {
       csr.read_mostly();
     }
     double elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
-    nvtxRangePop();
     LOG(info, "read-mostly CSR time {}s", elapsed);
     readMostlyTimes.push_back(elapsed);
 
     // accessed-by
-    nvtxRangePush("accessed-by");
     start = std::chrono::system_clock::now();
     if (opts.accessedBy) {
       for (const auto &gpu : gpus) {
@@ -264,12 +261,10 @@ template <typename Index> int run(RunOptions &opts) {
       }
     }
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
-    nvtxRangePop();
     LOG(info, "accessed-by CSR time {}s", elapsed);
     accessedByTimes.push_back(elapsed);
 
     // prefetch
-    nvtxRangePush("prefetch");
     start = std::chrono::system_clock::now();
     if (opts.prefetchAsync) {
       for (size_t gpuIdx = 0; gpuIdx < gpus.size(); ++gpuIdx) {
@@ -279,7 +274,6 @@ template <typename Index> int run(RunOptions &opts) {
       }
     }
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
-    nvtxRangePop();
     LOG(info, "prefetch CSR time {}s", elapsed);
     prefetchAsyncTimes.push_back(elapsed);
 
@@ -301,7 +295,7 @@ template <typename Index> int run(RunOptions &opts) {
       break;
     }
     case Type::SEQUENTIAL: {
-      fmt::print("overlap");
+      fmt::print("sequential");
       break;
     }
     default: {
