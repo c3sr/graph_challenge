@@ -76,9 +76,9 @@ template <typename Mat> void consume(Buffer<std::vector<typename Mat::edge_type>
     bool popped;
     SPDLOG_TRACE(pangolin::logger::console(), "builder: trying to pop...");
     auto queueStart = std::chrono::system_clock::now();
+    edges = queue.pop(popped);
     auto queueEnd = std::chrono::system_clock::now();
     queueTime += (queueEnd - queueStart).count() / 1e9;
-    edges = queue.pop(popped);
     if (popped) {
       SPDLOG_TRACE(pangolin::logger::console(), "builder: popped {} edges", edges.size());
       auto csrStart = std::chrono::system_clock::now();
