@@ -62,7 +62,7 @@ int main(int argc, char **argv) {
   LOG(warn, "Not a release build");
 #endif
 
-  pangolin::topology::Topology topology = pangolin::topology::topology();
+  auto& topology = pangolin::topology::get();
 
   // summarize NUMA regions
   fmt::print(stdout, "NUMA regions\n");
