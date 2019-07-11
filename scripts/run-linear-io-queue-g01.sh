@@ -15,5 +15,6 @@ FLAGS="--bs 512 -g 0 -g 1 --prefetch-async --debug -n 5"
 src/benchmark-linear-io-queue $FLAGS --header >> $EXPERIMENT_DIR/run.csv 2>>$EXPERIMENT_DIR/run.log
 
 for g in $GRAPH_DIR/*.bel; do
+    echo $g
     numactl -p 0 src/benchmark-linear-io-queue $FLAGS $g >> $EXPERIMENT_DIR/run.csv 2>>$EXPERIMENT_DIR/run.log
 done
