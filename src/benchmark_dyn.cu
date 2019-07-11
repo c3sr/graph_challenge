@@ -41,10 +41,16 @@ void print_header(RunOptions &opts) {
   fmt::print("bmark{0}bs{0}sb{0}graph{0}nodes{0}edges{0}tris", opts.sep);
 
   for (int i = 0; i < opts.iters; ++i) {
-    fmt::print("{}time{}", opts.sep, i);
+    fmt::print("{}total_time{}", opts.sep, i);
   }
   for (int i = 0; i < opts.iters; ++i) {
-    fmt::print("{}teps{}", opts.sep, i);
+    fmt::print("{}total_teps{}", opts.sep, i);
+  }
+  for (int i = 0; i < opts.iters; ++i) {
+    fmt::print("{}count_time{}", opts.sep, i);
+  }
+  for (int i = 0; i < opts.iters; ++i) {
+    fmt::print("{}count_teps{}", opts.sep, i);
   }
   for (int i = 0; i < opts.iters; ++i) {
     fmt::print("{}kernel_time{}", opts.sep, i);
@@ -77,20 +83,23 @@ template <typename Index> int run(RunOptions &opts) {
   LOG(info, "read_data time {}s", elapsed);
   LOG(debug, "read {} edges", edges.size());
 
+  auto upperTriangularFilter = [](Edge e) { return e.first < e.second; };
+  // auto lowerTriangularFilter = [](Edge e) { return e.first > e.second; };
+
   // create csr and count `iters` times
-  std::vector<double> times;
+  std::vector<double> totalTimes;
+  std::vector<double> countTimes;
   std::vector<double> kernelTimes;
   uint64_t nodes;
   uint64_t tris;
   uint64_t nnz;
   for (int i = 0; i < opts.iters; ++i) {
     // create csr
-    start = std::chrono::system_clock::now();
-    auto upperTriangularFilter = [](Edge e) { return e.first < e.second; };
-    auto lowerTriangularFilter = [](Edge e) { return e.first > e.second; };
+    const auto startCSR = std::chrono::system_clock::now();
+    
     auto adj = pangolin::CSRCOO<Index>::from_edges(edges.begin(), edges.end(), upperTriangularFilter);
     LOG(debug, "nnz = {}", adj.nnz());
-    elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
+    elapsed = (std::chrono::system_clock::now() - startCSR).count() / 1e9;
     LOG(info, "create CSR time {}s", elapsed);
 
     // read-mostly
@@ -98,10 +107,10 @@ template <typename Index> int run(RunOptions &opts) {
     const auto startHints = std::chrono::system_clock::now();
     if (opts.readMostly) {
       adj.read_mostly();
-      for (const auto &gpu : gpus) {
-        CUDA_RUNTIME(cudaSetDevice(gpu));
-        CUDA_RUNTIME(cudaDeviceSynchronize());
-      }
+      // for (const auto &gpu : gpus) {
+        // CUDA_RUNTIME(cudaSetDevice(gpu));
+        // CUDA_RUNTIME(cudaDeviceSynchronize());
+      // }
     }
     elapsed = (std::chrono::system_clock::now() - startHints).count() / 1e9;
     nvtxRangePop();
@@ -112,8 +121,8 @@ template <typename Index> int run(RunOptions &opts) {
     if (opts.accessedBy) {
       for (const auto &gpu : gpus) {
         adj.accessed_by(gpu);
-        CUDA_RUNTIME(cudaSetDevice(gpu));
-        CUDA_RUNTIME(cudaDeviceSynchronize());
+        // CUDA_RUNTIME(cudaSetDevice(gpu));
+        // CUDA_RUNTIME(cudaDeviceSynchronize());
       }
     }
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
@@ -124,17 +133,17 @@ template <typename Index> int run(RunOptions &opts) {
     if (opts.prefetchAsync) {
       for (const auto &gpu : gpus) {
         adj.prefetch_async(gpu);
-        CUDA_RUNTIME(cudaSetDevice(gpu));
-        CUDA_RUNTIME(cudaDeviceSynchronize());
+        // CUDA_RUNTIME(cudaSetDevice(gpu));
+        // CUDA_RUNTIME(cudaDeviceSynchronize());
       }
     }
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
     LOG(info, "prefetch CSR time {}s", elapsed);
 
     // create async counters
+    LOG(debug, "binary cost scaling: {}", opts.scaleBinary);
     start = std::chrono::system_clock::now();
     std::vector<pangolin::EdgeWarpDynTC> counters;
-    LOG(debug, "binary cost scaling: {}", opts.scaleBinary);
     for (int dev : gpus) {
       LOG(debug, "create device {} counter", dev);
       counters.push_back(std::move(pangolin::EdgeWarpDynTC(dev, opts.scaleBinary)));
@@ -163,14 +172,19 @@ template <typename Index> int run(RunOptions &opts) {
       counter.sync();
       total += counter.count();
     }
+    
 
-    elapsed = (std::chrono::system_clock::now() - startHints).count() / 1e9;
-    LOG(info, "{} triangles ({} teps)", total, adj.nnz() / elapsed);
-    LOG(info, "count time: {}s", elapsed);
+    auto countElapsed = (std::chrono::system_clock::now() - startHints).count() / 1e9;
+    auto totalElapsed = (std::chrono::system_clock::now() - startCSR).count() / 1e9;
+    LOG(info, "{} triangles", total);
     for (auto &counter : counters) {
-      LOG(info, "GPU {} kernel time: {}", counter.device(), counter.kernel_time());
+      LOG(info, "GPU {} kernel time: {} ({} teps)", counter.device(), counter.kernel_time(),
+          adj.nnz() / counter.kernel_time());
     }
-    times.push_back(elapsed);
+    LOG(info, "count time: {}s ({} teps)", countElapsed, adj.nnz() / countElapsed);
+    countTimes.push_back(countElapsed);
+    LOG(info, "total time: {}s ({} teps)", totalElapsed, adj.nnz() / totalElapsed);
+    totalTimes.push_back(totalElapsed);
     if (counters.size() == 1) {
       kernelTimes.push_back(counters[0].kernel_time());
     } else {
@@ -190,8 +204,12 @@ template <typename Index> int run(RunOptions &opts) {
     fmt::print("{}{}", opts.sep, nnz);
     fmt::print("{}{}", opts.sep, tris);
 
-    print_vec(times, opts.sep);
-    for (const auto &s : times) {
+    print_vec(totalTimes, opts.sep);
+    for (const auto &s : totalTimes) {
+      fmt::print("{}{}", opts.sep, nnz / s);
+    }
+    print_vec(countTimes, opts.sep);
+    for (const auto &s : countTimes) {
       fmt::print("{}{}", opts.sep, nnz / s);
     }
     print_vec(kernelTimes, opts.sep);
