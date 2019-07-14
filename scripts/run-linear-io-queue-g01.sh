@@ -10,7 +10,7 @@ mkdir -p $EXPERIMENT_DIR
 
 src/pangolin-version >> $EXPERIMENT_DIR/version.txt
 
-FLAGS="--bs 512 -g 0 -g 1 --prefetch-async --debug -n 5"
+FLAGS="--bs 512 -g 0 -g 1 --read-mostly --prefetch-async --debug -n 3"
 
 src/benchmark-linear-io-queue $FLAGS --header >> $EXPERIMENT_DIR/run.csv 2>>$EXPERIMENT_DIR/run.log
 
