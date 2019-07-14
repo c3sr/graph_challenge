@@ -5,6 +5,8 @@ Count triangles using the per-edge binary search
 */
 
 #include <iostream>
+#include <thread>
+#include <vector>
 
 #include <nvToolsExt.h>
 
@@ -12,24 +14,16 @@ Count triangles using the per-edge binary search
 #include <fmt/format.h>
 
 #include "pangolin/algorithm/tc_edge_binary.cuh"
+#include "pangolin/bounded_buffer.hpp"
 #include "pangolin/configure.hpp"
 #include "pangolin/file/edge_list_file.hpp"
 #include "pangolin/init.hpp"
+#include "pangolin/cuda_cxx/stream.hpp"
 #include "pangolin/sparse/csr_coo.hpp"
 
-struct RunOptions {
-  std::string path; //!< path for graph
-  std::string sep;  //!< seperator for output
-  std::vector<int> gpus;
-  int blockSize;
-  int coarsening;
-  int iters;
-
-  bool readMostly;
-  bool accessedBy;
-  bool prefetchAsync;
-  bool shrinkToFit;
-};
+// Buffer is a BoundedBuffer with two entries (double buffer)
+template <typename T> using Buffer = pangolin::BoundedBuffer<T, 2>;
+using pangolin::Stream;
 
 template <typename V> void print_vec(const V &vec, const std::string &sep) {
   for (const auto &e : vec) {
@@ -37,8 +31,126 @@ template <typename V> void print_vec(const V &vec, const std::string &sep) {
   }
 }
 
+template <typename Edge> void produce(const std::string path, Buffer<std::vector<Edge>> &queue) {
+  double readTime = 0, queueTime = 0;
+  pangolin::EdgeListFile file(path);
+
+  std::vector<Edge> edges;
+
+  while (true) {
+    auto readStart = std::chrono::system_clock::now();
+    size_t readCount = file.get_edges(edges, 500);
+    auto readEnd = std::chrono::system_clock::now();
+    readTime += (readEnd - readStart).count() / 1e9;
+    SPDLOG_TRACE(pangolin::logger::console(), "reader: read {} edges", edges.size());
+    if (0 == readCount) {
+      break;
+    }
+
+    auto queueStart = std::chrono::system_clock::now();
+    queue.push(std::move(edges));
+    auto queueEnd = std::chrono::system_clock::now();
+    queueTime += (queueEnd - queueStart).count() / 1e9;
+    SPDLOG_TRACE(pangolin::logger::console(), "reader: pushed edges");
+  }
+
+  SPDLOG_TRACE(pangolin::logger::console(), "reader: closing queue");
+  queue.close();
+  LOG(debug, "reader: {}s I/O, {}s blocked", readTime, queueTime);
+}
+
+template <typename Mat> void consume(Buffer<std::vector<typename Mat::edge_type>> &queue, Mat &mat) {
+  typedef typename Mat::index_type Index;
+  typedef typename Mat::edge_type Edge;
+
+  double queueTime = 0, csrTime = 0;
+  auto upperTriangular = [](const Edge &e) { return e.first < e.second; };
+
+  // keep grabbing while queue is filling
+  Index maxNode = 0;
+  while (true) {
+    std::vector<Edge> edges;
+    bool popped;
+    SPDLOG_TRACE(pangolin::logger::console(), "builder: trying to pop...");
+    auto queueStart = std::chrono::system_clock::now();
+    edges = queue.pop(popped);
+    auto queueEnd = std::chrono::system_clock::now();
+    queueTime += (queueEnd - queueStart).count() / 1e9;
+    if (popped) {
+      SPDLOG_TRACE(pangolin::logger::console(), "builder: popped {} edges", edges.size());
+      auto csrStart = std::chrono::system_clock::now();
+      for (const auto &edge : edges) {
+        maxNode = max(edge.first, maxNode);
+        maxNode = max(edge.second, maxNode);
+        if (upperTriangular(edge)) {
+          // SPDLOG_TRACE(pangolin::logger::console(), "{} {}", edge.first, edge.second);
+          mat.add_next_edge(edge);
+        }
+      }
+      auto csrEnd = std::chrono::system_clock::now();
+      csrTime += (csrEnd - csrStart).count() / 1e9;
+    } else {
+      SPDLOG_TRACE(pangolin::logger::console(), "builder: no edges after pop");
+      assert(queue.empty());
+      assert(queue.closed());
+      break;
+    }
+  }
+
+  auto csrStart = std::chrono::system_clock::now();
+  mat.finish_edges(maxNode);
+  auto csrEnd = std::chrono::system_clock::now();
+  csrTime += (csrEnd - csrStart).count() / 1e9;
+
+  LOG(debug, "builder: {}s csr {}s blocked", csrTime, queueTime);
+}
+
+struct RunOptions {
+  int iters;
+  std::vector<int> gpus;
+  std::string path; //!< path for graph
+  std::string sep;  //!< seperator for output
+  int blockSize;
+  int coarsening;
+
+  bool readMostly;
+  bool accessedBy;
+  bool prefetchAsync;
+  bool shrinkToFit;
+  bool preCountBarrier;
+};
+
+void print_header(const RunOptions &opts) {
+  fmt::print("bmark{0}bs{0}gpus{0}graph{0}nodes{0}edges{0}tris", opts.sep);
+  for (auto i = 0; i < opts.iters; ++i) {
+    fmt::print("{}total_time{}", opts.sep, i);
+  }
+  for (auto i = 0; i < opts.iters; ++i) {
+    fmt::print("{}total_teps{}", opts.sep, i);
+  }
+  for (auto i = 0; i < opts.iters; ++i) {
+    fmt::print("{}gpu_time{}", opts.sep, i);
+  }
+  for (auto i = 0; i < opts.iters; ++i) {
+    fmt::print("{}gpu_teps{}", opts.sep, i);
+  }
+  for (auto i = 0; i < opts.iters; ++i) {
+    fmt::print("{}count_time{}", opts.sep, i);
+  }
+  for (auto i = 0; i < opts.iters; ++i) {
+    fmt::print("{}count_teps{}", opts.sep, i);
+  }
+  for (auto i = 0; i < opts.iters; ++i) {
+    fmt::print("{}kernel_time{}", opts.sep, i);
+  }
+  for (auto i = 0; i < opts.iters; ++i) {
+    fmt::print("{}kernel_teps{}", opts.sep, i);
+  }
+  fmt::print("\n");
+}
+
 template <typename Index> int run(RunOptions &opts) {
-  typedef typename pangolin::EdgeTy<Index> Edge;
+  typedef pangolin::EdgeTy<Index> Edge;
 
   auto gpus = opts.gpus;
   if (gpus.empty()) {
@@ -46,110 +158,105 @@ template <typename Index> int run(RunOptions &opts) {
     gpus.push_back(0);
   }
 
-  // read data
-  auto start = std::chrono::system_clock::now();
-  pangolin::EdgeListFile file(opts.path);
-
-  std::vector<Edge> edges;
-  std::vector<Edge> fileEdges;
-  while (file.get_edges(fileEdges, 500)) {
-    edges.insert(edges.end(), fileEdges.begin(), fileEdges.end());
+  // create a stream for each GPU
+  std::vector<Stream> streams;
+  for (const auto &gpu : gpus) {
+    streams.push_back(Stream(gpu));
+    LOG(debug, "created stream {} for gpu {}", streams.back(), gpu);
   }
-  double elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
-  LOG(info, "read_data time {}s", elapsed);
-  LOG(debug, "read {} edges", edges.size());
 
-  // record various times for each iteration
-  std::vector<double> iterationTimes(opts.iters, 0);   // the total wall time elapsed during each iteration
-  std::vector<double> competitionTimes(opts.iters, 0); // the actual competition time
-  std::vector<double> csrTimes(opts.iters, 0);         // time taken to build the CSR
-  std::vector<double> kernelTimes(opts.iters,
-                                  0); // just the triangle counting kernel
-  std::vector<double> countTimes(
-      opts.iters, 0); // the wall time elapsed configuring, launching, and waiting for counting operations
-  std::vector<double> readMostlyTimes(opts.iters,
-                                      0);           // times elapsed during read-mostly
-  std::vector<double> prefetchTimes(opts.iters, 0); // times elapsed during prefetch
-  std::vector<double> accessedByTimes(opts.iters,
-                                      0); // times elapsed during accessed-by
-  std::vector<double> counterCtorTimes(opts.iters,
-                                       0); // time taken to construct counters
 
+  std::vector<double> totalTimes;
+  std::vector<double> gpuTimes;
+  std::vector<double> countTimes;
+  std::vector<double> kernelTimes;
   uint64_t nnz;
-  uint64_t tris;
   uint64_t numRows;
+  uint64_t tris;
   // create csr and count `opts.iters` times
   for (int i = 0; i < opts.iters; ++i) {
-    auto iterStart = std::chrono::system_clock::now();
-    auto competitionStart = std::chrono::system_clock::now();
-    // create csr
-    auto upperTriangularFilter = [](Edge e) { return e.first < e.second; };
-    // auto lowerTriangularFilter = [](Edge e) { return e.first > e.second; };
-    auto csr = pangolin::CSRCOO<Index>::from_edges(edges.begin(), edges.end(), upperTriangularFilter);
+
+    // read data
+    const auto totalStart = std::chrono::system_clock::now();
+    Buffer<std::vector<Edge>> queue;
+    pangolin::CSRCOO<Index> csr;
+    // start a thread to read the matrix data
+    LOG(debug, "start disk reader");
+    std::thread reader(produce<Edge>, opts.path, std::ref(queue));
+    // start a thread to build the matrix
+    LOG(debug, "start csr build");
+    std::thread builder(consume<pangolin::CSRCOO<Index>>, std::ref(queue), std::ref(csr));
+    // consume(queue, csr, &readerActive);
+    LOG(debug, "waiting for disk reader...");
+    reader.join();
+    LOG(debug, "waiting for CSR builder...");
+    builder.join();
+    assert(queue.empty());
 
     if (opts.shrinkToFit) {
       LOG(debug, "shrink CSR");
       csr.shrink_to_fit();
     }
 
-    elapsed = (std::chrono::system_clock::now() - iterStart).count() / 1e9;
+    double elapsed = (std::chrono::system_clock::now() - totalStart).count() / 1e9;
+    LOG(info, "io/csr time {}s", elapsed);
     LOG(debug, "CSR nnz = {} rows = {}", csr.nnz(), csr.num_rows());
     LOG(debug, "CSR cap = {}MB size = {}MB", csr.capacity_bytes() / 1024 / 1024, csr.size_bytes() / 1024 / 1024);
-    LOG(info, "create CSR time {}s", elapsed);
-    csrTimes[i] = elapsed;
+
+    const auto gpuStart = std::chrono::system_clock::now();
 
     // read-mostly
     nvtxRangePush("read-mostly");
-    start = std::chrono::system_clock::now();
+    auto start = std::chrono::system_clock::now();
     if (opts.readMostly) {
       csr.read_mostly();
-      for (const auto &gpu : gpus) {
-        CUDA_RUNTIME(cudaSetDevice(gpu));
-        CUDA_RUNTIME(cudaDeviceSynchronize());
-      }
     }
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
     nvtxRangePop();
     LOG(info, "read-mostly CSR time {}s", elapsed);
-    readMostlyTimes[i] = elapsed;
 
     // accessed-by
     start = std::chrono::system_clock::now();
     if (opts.accessedBy) {
       for (const auto &gpu : gpus) {
         csr.accessed_by(gpu);
-        CUDA_RUNTIME(cudaSetDevice(gpu));
-        CUDA_RUNTIME(cudaDeviceSynchronize());
       }
     }
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
     LOG(info, "accessed-by CSR time {}s", elapsed);
-    accessedByTimes[i] = elapsed;
 
     // prefetch
     start = std::chrono::system_clock::now();
     if (opts.prefetchAsync) {
-      for (const auto &gpu : gpus) {
-        csr.prefetch_async(gpu);
-        CUDA_RUNTIME(cudaSetDevice(gpu));
-        CUDA_RUNTIME(cudaDeviceSynchronize());
+      for (size_t gpuIdx = 0; gpuIdx < gpus.size(); ++gpuIdx) {
+        auto &gpu = gpus[gpuIdx];
+        cudaStream_t stream = streams[gpuIdx].stream();
+        csr.prefetch_async(gpu, stream);
       }
     }
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
     LOG(info, "prefetch CSR time {}s", elapsed);
-    prefetchTimes[i] = elapsed;
+
+    if (opts.preCountBarrier) {
+      LOG(debug, "sync streams after hints");
+      for (auto &stream : streams) {
+        stream.sync();
+      }
+    }
+
+    // count triangles
+    nvtxRangePush("count");
+    const auto countStart = std::chrono::system_clock::now();
 
     // create async counters
-    const auto counterCtorStart = std::chrono::system_clock::now();
     std::vector<pangolin::BinaryTC> counters;
-    for (int dev : gpus) {
+    for (size_t gpuIdx = 0; gpuIdx < gpus.size(); ++gpuIdx) {
+      auto dev = gpus[gpuIdx];
+      cudaStream_t stream = streams[gpuIdx].stream();
       LOG(debug, "create device {} counter", dev);
-      counters.push_back(std::move(pangolin::BinaryTC(dev)));
+      counters.push_back(std::move(pangolin::BinaryTC(dev, stream)));
     }
-    elapsed = (std::chrono::system_clock::now() - counterCtorStart).count() / 1e9;
-    counterCtorTimes[i] = elapsed;
 
-    const auto countStart = std::chrono::system_clock::now();
 
     // determine the number of edges per gpu
     const size_t edgesPerGPU = (csr.nnz() + gpus.size() - 1) / gpus.size();
@@ -172,31 +279,36 @@ template <typename Index> int run(RunOptions &opts) {
       counter.sync();
       total += counter.count();
     }
-
-    const auto countStop = std::chrono::system_clock::now();
-
-    elapsed = (countStop - countStart).count() / 1e9;
-    for (auto &counter : counters) {
-      double secs = counter.kernel_time();
-      int dev = counter.device();
-      LOG(info, "gpu {} kernel time {}s ({} teps)", dev, secs, csr.nnz() / secs);
-    }
-    LOG(info, "count time {}s ({} teps)", elapsed, csr.nnz() / elapsed);
+    const auto stop = std::chrono::system_clock::now();
+    nvtxRangePop(); // count
     LOG(info, "{} triangles", total);
-    countTimes[i] = elapsed;
-    elapsed = (countStop - competitionStart).count() / 1e9;
-    competitionTimes[i] = elapsed;
-    elapsed = (countStop - iterStart).count() / 1e9;
-    iterationTimes[i] = elapsed;
-    if (counters.size() == 1) {
-      kernelTimes[i] = counters[0].kernel_time();
-    } else {
-      kernelTimes[i] = 0;
-    }
 
+    // record graph stats
     tris = total;
     nnz = csr.nnz();
     numRows = csr.num_rows();
+
+
+    const double totalElapsed = (stop - totalStart).count() / 1e9;
+    const double gpuElapsed = (stop - gpuStart).count() / 1e9;
+    const double countElapsed = (stop - countStart).count() / 1e9;
+    LOG(info, "total time {}s ({} teps)", totalElapsed, nnz / totalElapsed);
+    LOG(info, "gpu time   {}s ({} teps)", gpuElapsed, nnz / gpuElapsed);
+    LOG(info, "count time {}s ({} teps)", countElapsed, nnz / countElapsed);
+    totalTimes.push_back(totalElapsed);
+    gpuTimes.push_back(gpuElapsed);
+    countTimes.push_back(countElapsed);
+
+    for (auto &counter : counters) {
+      double secs = counter.kernel_time();
+      int dev = counter.device();
+      LOG(info, "gpu {} kernel time {}s ({} teps)", dev, secs, nnz / secs);
+    }
+    if (counters.size() == 1) {
+      kernelTimes.push_back(counters[0].kernel_time());
+    } else {
+      kernelTimes.push_back(0);
+    }
   }
 
   if (opts.iters > 0) {
@@ -212,10 +324,14 @@ template <typename Index> int run(RunOptions &opts) {
     fmt::print("{}{}", opts.sep, nnz);
     fmt::print("{}{}", opts.sep, tris);
 
-    print_vec(readMostlyTimes, opts.sep);
-    print_vec(accessedByTimes, opts.sep);
-    print_vec(prefetchTimes, opts.sep);
-
+    print_vec(totalTimes, opts.sep);
+    for (const auto &s : totalTimes) {
+      fmt::print("{}{}", opts.sep, nnz / s);
+    }
+    print_vec(gpuTimes, opts.sep);
+    for (const auto &s : gpuTimes) {
+      fmt::print("{}{}", opts.sep, nnz / s);
+    }
     print_vec(countTimes, opts.sep);
     for (const auto &s : countTimes) {
       fmt::print("{}{}", opts.sep, nnz / s);
@@ -224,36 +340,11 @@ template <typename Index> int run(RunOptions &opts) {
     for (const auto &s : kernelTimes) {
       fmt::print("{}{}", opts.sep, nnz / s);
     }
+
     fmt::print("\n");
   }
 
   return 0;
-}
-
-void print_header(const RunOptions &opts) {
-  fmt::print("bmark{0}bs{0}gpus{0}graph{0}nodes{0}edges{0}tris", opts.sep);
-  for (int i = 0; i < opts.iters; ++i) {
-    fmt::print("{}readMostly{}", opts.sep, i);
-  }
-  for (int i = 0; i < opts.iters; ++i) {
-    fmt::print("{}accessedBy{}", opts.sep, i);
-  }
-  for (int i = 0; i < opts.iters; ++i) {
-    fmt::print("{}prefetchAsync{}", opts.sep, i);
-  }
-  for (int i = 0; i < opts.iters; ++i) {
-    fmt::print("{}time{}", opts.sep, i);
-  }
-  for (int i = 0; i < opts.iters; ++i) {
-    fmt::print("{}teps{}", opts.sep, i);
-  }
-  for (int i = 0; i < opts.iters; ++i) {
-    fmt::print("{}kernel_time{}", opts.sep, i);
-  }
-  for (int i = 0; i < opts.iters; ++i) {
-    fmt::print("{}kernel_teps{}", opts.sep, i);
-  }
-  fmt::print("\n");
 }
 
 int main(int argc, char **argv) {
