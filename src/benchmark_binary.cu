@@ -16,9 +16,9 @@ Count triangles using the per-edge binary search
 #include "pangolin/algorithm/tc_edge_binary.cuh"
 #include "pangolin/bounded_buffer.hpp"
 #include "pangolin/configure.hpp"
+#include "pangolin/cuda_cxx/stream.hpp"
 #include "pangolin/file/edge_list_file.hpp"
 #include "pangolin/init.hpp"
-#include "pangolin/cuda_cxx/stream.hpp"
 #include "pangolin/sparse/csr_coo.hpp"
 
 // Buffer is a BoundedBuffer with two entries (double buffer)
@@ -165,7 +165,6 @@ template <typename Index> int run(RunOptions &opts) {
     LOG(debug, "created stream {} for gpu {}", streams.back(), gpu);
   }
 
-
   std::vector<double> totalTimes;
   std::vector<double> gpuTimes;
   std::vector<double> countTimes;
@@ -257,7 +256,6 @@ template <typename Index> int run(RunOptions &opts) {
       counters.push_back(std::move(pangolin::BinaryTC(dev, stream)));
     }
 
-
     // determine the number of edges per gpu
     const size_t edgesPerGPU = (csr.nnz() + gpus.size() - 1) / gpus.size();
     LOG(debug, "{} edges per GPU", edgesPerGPU);
@@ -287,7 +285,6 @@ template <typename Index> int run(RunOptions &opts) {
     tris = total;
     nnz = csr.nnz();
     numRows = csr.num_rows();
-
 
     const double totalElapsed = (stop - totalStart).count() / 1e9;
     const double gpuElapsed = (stop - gpuStart).count() / 1e9;
@@ -360,6 +357,7 @@ int main(int argc, char **argv) {
   opts.readMostly = false;
   opts.accessedBy = false;
   opts.prefetchAsync = false;
+  opts.preCountBarrier = true;
 
   bool help = false;
   bool debug = false;
