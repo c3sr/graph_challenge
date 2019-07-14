@@ -1,12 +1,11 @@
 /*!
 
 Count triangles using the linear search.
-Simultaneously read and build the GPU implementation with a queue of edges.
+Simultaneously read and build the CSR with a queue of edges.
 
 */
 
 #include <iostream>
-#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -23,16 +22,14 @@ Simultaneously read and build the GPU implementation with a queue of edges.
 #include "pangolin/init.hpp"
 #include "pangolin/sparse/csr_coo.hpp"
 
-using pangolin::BoundedBuffer;
+// Buffer is a BoundedBuffer with two entries (double buffer)
+template <typename T> using Buffer = pangolin::BoundedBuffer<T, 2>;
 
 template <typename V> void print_vec(const V &vec, const std::string &sep) {
   for (const auto &e : vec) {
     fmt::print("{}{}", sep, e);
   }
 }
-
-// Buffer is a BoundedBuffer with two entries (double buffer)
-template <typename T> using Buffer = BoundedBuffer<T, 2>;
 
 template <typename Edge> void produce(const std::string path, Buffer<std::vector<Edge>> &queue) {
   double readTime = 0, queueTime = 0;
@@ -124,10 +121,16 @@ struct RunOptions {
 void print_header(const RunOptions &opts) {
   fmt::print("benchmark{0}bs{0}gpus{0}graph{0}nodes{0}edges{0}tris", opts.sep);
   for (auto i = 0; i < opts.iters; ++i) {
-    fmt::print("{}process_time{}", opts.sep, i);
+    fmt::print("{}total_time{}", opts.sep, i);
   }
   for (auto i = 0; i < opts.iters; ++i) {
-    fmt::print("{}process_teps{}", opts.sep, i);
+    fmt::print("{}total_teps{}", opts.sep, i);
+  }
+  for (auto i = 0; i < opts.iters; ++i) {
+    fmt::print("{}gpu_time{}", opts.sep, i);
+  }
+  for (auto i = 0; i < opts.iters; ++i) {
+    fmt::print("{}gpu_teps{}", opts.sep, i);
   }
   for (auto i = 0; i < opts.iters; ++i) {
     fmt::print("{}count_time{}", opts.sep, i);
@@ -148,7 +151,7 @@ template <typename Index> int run(RunOptions &opts) {
   typedef pangolin::EdgeTy<Index> Edge;
   using pangolin::RcStream;
 
-  std::vector<int> gpus = opts.gpus;
+  auto gpus = opts.gpus;
   if (gpus.empty()) {
     LOG(warn, "no GPUs provided on command line, using GPU 0");
     gpus.push_back(0);
@@ -202,51 +205,51 @@ template <typename Index> int run(RunOptions &opts) {
     }
   }
 
-  // read data / build
-  auto start = std::chrono::system_clock::now();
-
-  Buffer<std::vector<Edge>> queue;
-  pangolin::CSRCOO<Index> csr;
-  // start a thread to read the matrix data
-  LOG(debug, "start disk reader");
-  std::thread reader(produce<Edge>, opts.path, std::ref(queue));
-
-  // start a thread to build the matrix
-  LOG(debug, "start csr build");
-  std::thread builder(consume<pangolin::CSRCOO<Index>>, std::ref(queue), std::ref(csr));
-  // consume(queue, csr, &readerActive);
-
-  LOG(debug, "waiting for disk reader...");
-  reader.join();
-  LOG(debug, "waiting for CSR builder...");
-  builder.join();
-  assert(queue.empty());
-
-  double elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
-  LOG(info, "read_data/build time {}s", elapsed);
-  LOG(debug, "CSR: nnz = {}, rows = {}", csr.nnz(), csr.num_rows());
-
   // count `iters` times
-  std::vector<double> processTimes;
+  std::vector<double> totalTimes;
+  std::vector<double> gpuTimes;
   std::vector<double> countTimes;
   std::vector<double> kernelTimes;
-  std::vector<uint64_t> tris;
+  uint64_t nnz;
+  uint64_t numRows;
+  uint64_t tris;
   for (int i = 0; i < opts.iters; ++i) {
 
-    const auto processStart = std::chrono::system_clock::now();
+    // read data / build
+    const auto totalStart = std::chrono::system_clock::now();
+
+    Buffer<std::vector<Edge>> queue;
+    pangolin::CSRCOO<Index> csr;
+    // start a thread to read the matrix data
+    LOG(debug, "start disk reader");
+    std::thread reader(produce<Edge>, opts.path, std::ref(queue));
+    // start a thread to build the matrix
+    LOG(debug, "start csr build");
+    std::thread builder(consume<pangolin::CSRCOO<Index>>, std::ref(queue), std::ref(csr));
+    // consume(queue, csr, &readerActive);
+    LOG(debug, "waiting for disk reader...");
+    reader.join();
+    LOG(debug, "waiting for CSR builder...");
+    builder.join();
+    assert(queue.empty());
+    double elapsed = (std::chrono::system_clock::now() - totalStart).count() / 1e9;
+    LOG(info, "read_data/build time {}s", elapsed);
+    LOG(debug, "CSR: nnz = {}, rows = {}", csr.nnz(), csr.num_rows());
+
+    const auto gpuStart = std::chrono::system_clock::now();
 
     // read-mostly
     nvtxRangePush("read-mostly");
     if (opts.readMostly) {
       csr.read_mostly();
     }
-    elapsed = (std::chrono::system_clock::now() - processStart).count() / 1e9;
+    elapsed = (std::chrono::system_clock::now() - gpuStart).count() / 1e9;
     nvtxRangePop();
     LOG(info, "read-mostly CSR time {}s", elapsed);
 
     // accessed-by
     nvtxRangePush("accessed-by");
-    start = std::chrono::system_clock::now();
+    auto start = std::chrono::system_clock::now();
     if (opts.accessedBy) {
       for (const auto &gpu : gpus) {
         csr.accessed_by(gpu);
@@ -312,24 +315,34 @@ template <typename Index> int run(RunOptions &opts) {
       total += counter.count();
     }
     const auto stop = std::chrono::system_clock::now();
+    nvtxRangePop(); // count
     LOG(info, "{} triangles", total);
-    const double processElapsed = (stop - processStart).count() / 1e9;
-    const double countElapsed = (stop - countStart).count() / 1e9;
-    nvtxRangePop();
-    LOG(info, "process time {}s ({} teps)", processElapsed, csr.nnz() / processElapsed);
-    LOG(info, "count time {}s ({} teps)", countElapsed, csr.nnz() / countElapsed);
 
-    processTimes.push_back(processElapsed);
+    // record graph stats
+    tris = total;
+    nnz = csr.nnz();
+    numRows = csr.num_rows();
+
+    // record times
+    const double totalElapsed = (stop - totalStart).count() / 1e9;
+    const double gpuElapsed = (stop - gpuStart).count() / 1e9;
+    const double countElapsed = (stop - countStart).count() / 1e9;
+    LOG(info, "total time {}s ({} teps)", totalElapsed, nnz / totalElapsed);
+    LOG(info, "gpu time   {}s ({} teps)", gpuElapsed, nnz / gpuElapsed);
+    LOG(info, "count time {}s ({} teps)", countElapsed, nnz / countElapsed);
+    totalTimes.push_back(totalElapsed);
+    gpuTimes.push_back(gpuElapsed);
     countTimes.push_back(countElapsed);
-    tris.push_back(total);
-    if (gpus.size() == 1) {
+
+    for (auto &counter : counters) {
+      double secs = counter.kernel_time();
+      int dev = counter.device();
+      LOG(info, "gpu {} kernel time {}s ({} teps)", dev, secs, nnz / secs);
+    }
+    if (counters.size() == 1) {
       kernelTimes.push_back(counters[0].kernel_time());
     } else {
       kernelTimes.push_back(0);
-    }
-    for (auto &counter : counters) {
-      double s = counter.kernel_time();
-      LOG(info, "GPU {} kernel time {}s ({} teps)", counter.device(), s, counter.num_edges() / s);
     }
   }
 
@@ -342,23 +355,28 @@ template <typename Index> int run(RunOptions &opts) {
     }
     fmt::print("{}{}", opts.sep, gpuStr);
     fmt::print("{}{}", opts.sep, opts.path);
-    fmt::print("{}{}", opts.sep, csr.num_rows());
-    fmt::print("{}{}", opts.sep, csr.nnz());
-    fmt::print("{}{}", opts.sep, tris[0]);
-    print_vec(processTimes, opts.sep);
-    for (const auto &s : processTimes) {
-      fmt::print("{}{}", opts.sep, csr.nnz() / s);
+    fmt::print("{}{}", opts.sep, numRows);
+    fmt::print("{}{}", opts.sep, nnz);
+    fmt::print("{}{}", opts.sep, tris);
+
+    print_vec(totalTimes, opts.sep);
+    for (const auto &s : totalTimes) {
+      fmt::print("{}{}", opts.sep, nnz / s);
+    }
+    print_vec(gpuTimes, opts.sep);
+    for (const auto &s : gpuTimes) {
+      fmt::print("{}{}", opts.sep, nnz / s);
     }
     print_vec(countTimes, opts.sep);
     for (const auto &s : countTimes) {
-      fmt::print("{}{}", opts.sep, csr.nnz() / s);
+      fmt::print("{}{}", opts.sep, nnz / s);
     }
     print_vec(kernelTimes, opts.sep);
     for (const auto &s : kernelTimes) {
-      fmt::print("{}{}", opts.sep, csr.nnz() / s);
+      fmt::print("{}{}", opts.sep, nnz / s);
     }
+    fmt::print("\n");
   }
-  fmt::print("\n");
 
   return 0;
 }
@@ -380,7 +398,7 @@ int main(int argc, char **argv) {
   opts.readMostly = false;
   opts.accessedBy = false;
   opts.prefetchAsync = false;
-  opts.blockSize = 256;
+  opts.blockSize = 512;
   opts.sep = ",";
   opts.preCountBarrier = true;
 
