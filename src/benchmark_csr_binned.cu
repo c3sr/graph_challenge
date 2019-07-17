@@ -66,6 +66,7 @@ template <typename Mat> void consume(Buffer<std::vector<typename Mat::edge_type>
 
   // keep grabbing while queue is filling
   NodeIndex maxNode = 0;
+  EdgeIndex numEdges = 0;
   while (true) {
     std::vector<Edge> edges;
     bool popped;
@@ -83,6 +84,11 @@ template <typename Mat> void consume(Buffer<std::vector<typename Mat::edge_type>
         if (upperTriangular(edge)) {
           // SPDLOG_TRACE(pangolin::logger::console(), "{} {}", edge.first, edge.second);
           mat.add_next_edge(edge);
+          numEdges++;
+if (numEdges % (1ull << 30) == 0) {
+  LOG(warn, "added {} edges...", numEdges);
+  LOG(warn, "nnz = {} num_rows = {}", mat.nnz(), mat.num_rows());
+}
         }
       }
       auto csrEnd = std::chrono::system_clock::now();
@@ -157,7 +163,7 @@ template <typename NodeIndex, typename EdgeIndex> int run(RunOptions &opts) {
   Buffer<std::vector<Edge>> queue;
   CSR adj(opts.maxExpectedNode);
 
-  uint64_t expectedNnz = opts.maxExpectedNode * 20;
+  uint64_t expectedNnz = opts.maxExpectedNode * 30;
   LOG(debug, "reserve {} rows {} nnz", opts.maxExpectedNode, expectedNnz);
   adj.reserve(opts.maxExpectedNode, expectedNnz);
 
