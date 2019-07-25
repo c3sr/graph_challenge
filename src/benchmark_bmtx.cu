@@ -14,6 +14,7 @@ Count triangles using the per-edge binary search
 #include "pangolin/configure.hpp"
 #include "pangolin/file/bmtx_stream.hpp"
 #include "pangolin/init.hpp"
+#include "pangolin/sparse/csr_binned.hpp"
 
 struct RunOptions {
   std::string path; //!< path for graph
@@ -27,9 +28,11 @@ struct RunOptions {
   bool prefetchAsync;
 };
 
-template <typename Index> int run(RunOptions &opts) {
+template <typename NodeIndex, typename EdgeIndex> int run(RunOptions &opts) {
 
-  typedef typename pangolin::EdgeTy<Index> Edge;
+  using namespace pangolin;
+
+  typedef typename pangolin::EdgeTy<NodeIndex> Edge;
 
   auto gpus = opts.gpus;
   if (gpus.empty()) {
@@ -39,7 +42,7 @@ template <typename Index> int run(RunOptions &opts) {
 
   // read data
   auto start = std::chrono::system_clock::now();
-  auto bmtx = pangolin::open_bmtx_stream<Index>(opts.path);
+  auto bmtx = pangolin::open_bmtx_stream<NodeIndex>(opts.path);
   LOG(info, "{}: rows={} cols={} entries={}", opts.path, bmtx.num_rows(), bmtx.num_cols(), bmtx.nnz());
 
   Edge edge;
@@ -52,6 +55,16 @@ template <typename Index> int run(RunOptions &opts) {
   LOG(info, "read_data time {}s", elapsed);
   LOG(debug, "read {} edges", edges.size());
 
+  start = std::chrono::system_clock::now();
+  CSRBinned<NodeIndex, EdgeIndex> csr(bmtx.num_rows(), bmtx.nnz());
+
+  for (const auto &edge : edges) {
+    csr.add_next_edge(edge);
+  }
+  csr.finish_edges();
+
+  elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
+  LOG(info, "csr time {}s", elapsed);
   return 0;
 }
 
@@ -150,8 +163,8 @@ int main(int argc, char **argv) {
     return 0;
   }
   if (wide) {
-    return run<uint64_t>(opts);
+    return run<uint32_t, uint64_t>(opts);
   } else {
-    return run<uint32_t>(opts);
+    return run<uint32_t, uint32_t>(opts);
   }
 }
