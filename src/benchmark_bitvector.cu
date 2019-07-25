@@ -11,7 +11,7 @@ Count triangles using the per-edge binary search
 #include <clara/clara.hpp>
 #include <fmt/format.h>
 
-#include "pangolin/algorithm/tc_vertex_bitvector.cuh"
+#include "pangolin/algorithm/tc_vertex_warp_bitvector.cuh"
 #include "pangolin/configure.hpp"
 #include "pangolin/file/edge_list_file.hpp"
 #include "pangolin/init.hpp"
@@ -126,10 +126,10 @@ template <typename Index> int run(RunOptions &opts) {
 
     // create async counters
     const auto counterCtorStart = std::chrono::system_clock::now();
-    std::vector<pangolin::VertexBitvectorTC> counters;
+    std::vector<pangolin::VertexWarpBitvectorTC> counters;
     for (int dev : gpus) {
       LOG(debug, "create device {} counter", dev);
-      counters.push_back(std::move(pangolin::VertexBitvectorTC(dev)));
+      counters.push_back(std::move(pangolin::VertexWarpBitvectorTC(dev)));
     }
     elapsed = (std::chrono::system_clock::now() - counterCtorStart).count() / 1e9;
     counterCtorTimes[i] = elapsed;
