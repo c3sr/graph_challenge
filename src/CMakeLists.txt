@@ -19,7 +19,6 @@ function(add_exe)
     -Xcompiler=-Wpointer-arith;
     -Xcompiler=-Winit-self;
     -Xcompiler=-Wswitch-enum;
-    -Xcompiler=-Wredundant-decls;
     -Xcompiler=-Wfloat-equal;
     -Xcompiler=-Wundef;
     -Xcompiler=-Wvla;
