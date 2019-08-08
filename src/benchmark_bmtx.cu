@@ -11,6 +11,7 @@ Count triangles using the per-edge binary search
 #include <clara/clara.hpp>
 #include <fmt/format.h>
 
+#include "pangolin/algorithm/tc_vertex_cpu.cuh"
 #include "pangolin/configure.hpp"
 #include "pangolin/file/bmtx_stream.hpp"
 #include "pangolin/init.hpp"
@@ -33,6 +34,7 @@ template <typename NodeIndex, typename EdgeIndex> int run(RunOptions &opts) {
   using namespace pangolin;
 
   typedef typename pangolin::EdgeTy<NodeIndex> Edge;
+  typedef VertexCPUTC::Task Task;
 
   auto gpus = opts.gpus;
   if (gpus.empty()) {
@@ -45,10 +47,12 @@ template <typename NodeIndex, typename EdgeIndex> int run(RunOptions &opts) {
   auto bmtx = pangolin::open_bmtx_stream<NodeIndex>(opts.path);
   LOG(info, "{}: rows={} cols={} entries={}", opts.path, bmtx.num_rows(), bmtx.num_cols(), bmtx.nnz());
 
-  Edge edge;
   std::vector<Edge> edges;
-  while (bmtx.readEdge(edge)) {
-    edges.push_back(edge);
+  {
+    Edge edge;
+    while (bmtx.readEdge(edge)) {
+      edges.push_back(edge);
+    }
   }
 
   double elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
@@ -65,6 +69,29 @@ template <typename NodeIndex, typename EdgeIndex> int run(RunOptions &opts) {
 
   elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
   LOG(info, "csr time {}s", elapsed);
+
+  // Make counter
+  VertexCPUTC tc;
+
+  // Build tasks
+  std::vector<Task> tasks;
+  for (size_t i = 0; i < csr.num_partitions(); ++i) {
+    for (size_t j = 0; j < csr.num_partitions(); ++j) {
+      for (size_t k = 0; k < csr.num_partitions(); ++k) {
+        tasks.push_back({i, j, k});
+      }
+    }
+  }
+  LOG(info, "{} tasks", tasks.size());
+
+  for (const auto task : tasks) {
+    LOG(debug, "task {} {} {}", task.i, task.j, task.k);
+    tc.count_async(csr.two_col_view(task.j, task.k), task);
+  }
+
+  tc.sync();
+  fmt::print("{}\n", tc.count());
+
   return 0;
 }
 
