@@ -30,8 +30,8 @@ template <typename V> void print_vec(const V &vec, const std::string &sep) {
 }
 
 struct WorkerTimes {
-  double wait; //<! time waiting for synchronization
-  double work; //<! time doing something useful (io or csr)
+  double wait; //!< time waiting for synchronization
+  double work; //!< time doing something useful (io or csr)
 };
 
 // Buffer is a BoundedBuffer with two entries (double buffer)
