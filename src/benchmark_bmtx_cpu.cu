@@ -44,14 +44,14 @@ template <typename NodeIndex, typename EdgeIndex> int run(RunOptions &opts) {
 
   // read data
   auto start = std::chrono::system_clock::now();
-  auto bmtx = pangolin::open_bmtx_stream<NodeIndex>(opts.path);
+  auto bmtx = pangolin::open_bmtx_stream(opts.path);
   LOG(info, "{}: rows={} cols={} entries={}", opts.path, bmtx.num_rows(), bmtx.num_cols(), bmtx.nnz());
 
   std::vector<Edge> edges;
   {
-    Edge edge;
-    while (bmtx.readEdge(edge)) {
-      edges.push_back(edge);
+    decltype(bmtx)::edge_type we;
+    while (bmtx.readEdge(we)) {
+      edges.push_back(Edge(we.src, we.dst));
     }
   }
 

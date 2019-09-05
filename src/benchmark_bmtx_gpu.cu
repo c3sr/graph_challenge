@@ -23,6 +23,7 @@ struct RunOptions {
   std::vector<int> gpus;
   int dimBlock;
   int iters;
+  bool taskSync;
 
   bool readMostly;
   bool accessedBy;
@@ -51,14 +52,14 @@ template <typename NodeIndex, typename EdgeIndex> int run(RunOptions &opts) {
 
   // read data
   auto start = std::chrono::system_clock::now();
-  auto bmtx = pangolin::open_bmtx_stream<NodeIndex>(opts.path);
+  auto bmtx = pangolin::open_bmtx_stream(opts.path);
   LOG(info, "{}: rows={} cols={} entries={}", opts.path, bmtx.num_rows(), bmtx.num_cols(), bmtx.nnz());
 
   std::vector<Edge> edges;
   {
-    Edge edge;
-    while (bmtx.readEdge(edge)) {
-      edges.push_back(edge);
+    decltype(bmtx)::edge_type we;
+    while (bmtx.readEdge(we)) {
+      edges.push_back(Edge(we.src, we.dst));
     }
   }
 
@@ -99,6 +100,10 @@ template <typename NodeIndex, typename EdgeIndex> int run(RunOptions &opts) {
     auto &tc = counters[gpuIdx];
     LOG(debug, "task {} {} {} on counter {}", task.i, task.j, task.k, gpuIdx);
     tc.count_async(csr.two_col_view(task.j, task.k), task);
+    if (opts.taskSync) {
+      tc.sync();
+      LOG(debug, "finished task {} {} {}", task.i, task.j, task.k, gpuIdx);
+    }
     gpuIdx = (gpuIdx + 1) % gpus.size();
   }
 
@@ -144,6 +149,7 @@ int main(int argc, char **argv) {
   opts.readMostly = false;
   opts.accessedBy = false;
   opts.prefetchAsync = false;
+  opts.taskSync = false;
 
   bool help = false;
   bool debug = false;
@@ -162,6 +168,7 @@ int main(int argc, char **argv) {
   cli = cli | clara::Opt(opts.readMostly)["--read-mostly"]("mark data as read-mostly by all gpus before kernel");
   cli = cli | clara::Opt(opts.accessedBy)["--accessed-by"]("mark data as accessed-by all GPUs before kernel");
   cli = cli | clara::Opt(opts.prefetchAsync)["--prefetch-async"]("prefetch data to all GPUs before kernel");
+  cli = cli | clara::Opt(opts.taskSync)["--task-sync"]("sync stream after each task");
   cli = cli | clara::Opt(opts.iters, "N")["-n"]("number of counts");
   cli = cli | clara::Arg(opts.path, "graph file")("Path to adjacency list").required();
 
