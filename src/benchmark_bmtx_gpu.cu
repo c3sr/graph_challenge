@@ -23,7 +23,7 @@ struct RunOptions {
   std::vector<int> gpus;
   int dimBlock;
   int iters;
-  bool taskSync;
+  bool taskSync; //!< sync after each kernel call
 
   bool readMostly;
   bool accessedBy;
@@ -99,11 +99,13 @@ template <typename NodeIndex, typename EdgeIndex> int run(RunOptions &opts) {
   for (const auto task : tasks) {
     auto &tc = counters[gpuIdx];
     LOG(debug, "task {} {} {} on counter {}", task.i, task.j, task.k, gpuIdx);
+    nvtxRangePush(fmt::format("{} {} {}", task.i, task.j, task.k).c_str());
     tc.count_async(csr.two_col_view(task.j, task.k), task);
     if (opts.taskSync) {
       tc.sync();
       LOG(debug, "finished task {} {} {}", task.i, task.j, task.k, gpuIdx);
     }
+    nvtxRangePop();
     gpuIdx = (gpuIdx + 1) % gpus.size();
   }
 
