@@ -53,6 +53,10 @@ template <typename NodeIndex, typename EdgeIndex> int run(RunOptions &opts) {
     while (bmtx.readEdge(we)) {
       edges.push_back(Edge(we.src, we.dst));
     }
+
+    if (edges.size() % (1024 * 1024) == 0) {
+      LOG(debug, "read edge {}...", edges.size());
+    }
   }
 
   double elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
