@@ -222,7 +222,7 @@ int main(int argc, char **argv) {
       counter.InitializeWorkSpace_async(csr.view(), numEdges);
     }
 
-    int edgeStart = 0;
+    UT edgeStart = 0;
     for (auto &counter : trussCounters) 
     { 
       const size_t edgeStop = std::min(edgeStart + edgesPerGPU, csr.nnz());

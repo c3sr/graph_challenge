@@ -266,7 +266,7 @@ int main(int argc, char **argv) {
           if(counter.hnumaffected[0]>0)
           {
 
-            core_direct<dimBlock><<<dimGridEdges,dimBlock,0,counter.stream()>>>(counter.gnumdeleted, 
+            core_full_direct<dimBlock><<<dimGridEdges,dimBlock,0,counter.stream()>>>(counter.gnumdeleted, 
               counter.gnumaffected, kmin + (rank*gpusPerRank+ i)*step, 0, numEdges,
               rowPtr, ptrSrc, ptrDst, counter.gKeep, counter.gAffected, uReversed.data(), firstTry, 1);
   
