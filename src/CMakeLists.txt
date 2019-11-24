@@ -20,7 +20,6 @@ function(add_exe)
     -Xcompiler=-Winit-self;
     -Xcompiler=-Wswitch-enum;
     -Xcompiler=-Wfloat-equal;
-    -Xcompiler=-Wundef;
     -Xcompiler=-Wvla;
     -Xcompiler=-Wshadow;>
     )
@@ -42,10 +41,11 @@ endif()
 add_exe(NAME 2dhist SRCS 2dhist.cu)
 add_exe(NAME benchmark-b-vertex-t-edge-binary SRCS benchmark_b_vertex_t_edge_binary.cu)
 add_exe(NAME benchmark-bs-vertex-t-edge-binary SRCS benchmark_bs_vertex_t_edge_binary.cu)
+add_exe(NAME benchmark-bitvector SRCS benchmark_bitvector.cu)
 add_exe(NAME benchmark-binary SRCS benchmark_binary.cu)
 add_exe(NAME benchmark-bmtx-cpu SRCS benchmark_bmtx_cpu.cu)
 add_exe(NAME benchmark-bmtx-gpu SRCS benchmark_bmtx_gpu.cu)
-add_exe(NAME benchmark-bitvector SRCS benchmark_bitvector.cu)
+add_exe(NAME benchmark-cusparse SRCS benchmark_cusparse.cu)
 # add_exe(NAME benchmark-BissionFatica SRC benchmark_BissionFatica.cu)
 # add_exe(NAME benchmark-BissionFatica-low-tri SRCS benchmark_BissionFatica_low_tri.cu)
 # add_exe(NAME benchmark-csr-binned SRCS benchmark_csr_binned.cu)
