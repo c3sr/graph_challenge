@@ -1,6 +1,6 @@
 /*!
 
-Count triangles using the per-edge binary search
+Count triangles using CUSparse
 
 */
 
@@ -12,21 +12,18 @@ Count triangles using the per-edge binary search
 #include <clara/clara.hpp>
 #include <fmt/format.h>
 
-#include "pangolin/algorithm/tc_edge_binary.cuh"
-#include "pangolin/bounded_buffer.hpp"
 #include "pangolin/configure.hpp"
-#include "pangolin/cuda_cxx/stream.hpp"
 #include "pangolin/file/tsv.hpp"
 #include "pangolin/init.hpp"
 #include "pangolin/sparse/csr_val.hpp"
+#include "pangolin/algorithm/csr/tc_cusparse.hpp"
+#include "pangolin/cuda_cxx/stream.hpp"
 
 struct RunOptions {
   int iters;
   std::vector<int> gpus;
   std::string path; //!< path for graph
   std::string sep;  //!< seperator for output
-  int blockSize;
-  int coarsening;
 
   bool readMostly;
   bool accessedBy;
@@ -70,13 +67,17 @@ template <typename V> void print_vec(const V &vec, const std::string &sep) {
   }
 }
 
-template <typename NodeIndex, typename EdgeIndex> int run(RunOptions &opts) {
+int run(RunOptions &opts) {
 
+  // CUSparse uses integers for indices
+  typedef int NodeIndex;
+  typedef int EdgeIndex;
   typedef float Val;
   typedef pangolin::WeightedDiEdge<NodeIndex, Val> GraphEdge;
   typedef pangolin::CSR<NodeIndex, EdgeIndex, Val> CSR;
   typedef pangolin::file::TSV TSV;
   typedef TSV::edge_type FileEdge;
+  typedef pangolin::CUSparseTC TC;
   using pangolin::Stream;
 
   auto gpus = opts.gpus;
@@ -178,6 +179,9 @@ template <typename NodeIndex, typename EdgeIndex> int run(RunOptions &opts) {
     // count triangles
     nvtxRangePush("count");
     const auto countStart = std::chrono::system_clock::now();
+    TC counter(gpus[0]);
+    uint64_t count = counter.count_sync(csr);
+
 
     const auto stop = std::chrono::system_clock::now();
     nvtxRangePop(); // count
@@ -211,7 +215,6 @@ template <typename NodeIndex, typename EdgeIndex> int run(RunOptions &opts) {
 
   if (opts.iters > 0) {
     fmt::print("binary");
-    fmt::print("{}{}", opts.sep, opts.blockSize);
     std::string gpuStr;
     for (auto gpu : gpus) {
       gpuStr += std::to_string(gpu);
@@ -251,8 +254,6 @@ int main(int argc, char **argv) {
 
   RunOptions opts;
   opts.sep = ",";
-  opts.blockSize = 512;
-  opts.coarsening = 1;
   opts.iters = 1;
   opts.shrinkToFit = false;
   opts.readMostly = false;
@@ -264,17 +265,13 @@ int main(int argc, char **argv) {
   bool debug = false;
   bool verbose = false;
   bool onlyPrintHeader = false;
-  bool wide = false;
 
   clara::Parser cli;
   cli = cli | clara::Help(help);
   cli = cli | clara::Opt(debug)["--debug"]("print debug messages to stderr");
   cli = cli | clara::Opt(verbose)["--verbose"]("print verbose messages to stderr");
   cli = cli | clara::Opt(onlyPrintHeader)["--header"]("print the header for the times output and quit");
-  cli = cli | clara::Opt(wide)["--wide"]("64-bit node IDs");
   cli = cli | clara::Opt(opts.gpus, "dev ids")["-g"]("gpus to use");
-  cli = cli | clara::Opt(opts.coarsening, "coarsening")["-c"]("Number of elements per thread");
-  cli = cli | clara::Opt(opts.blockSize, "block-dim")["--bs"]("Number of threads in a block");
   cli = cli | clara::Opt(opts.shrinkToFit)["--shrink-to-fit"]("shrink allocations to fit data");
   cli = cli | clara::Opt(opts.readMostly)["--read-mostly"]("mark data as read-mostly by all gpus before kernel");
   cli = cli | clara::Opt(opts.accessedBy)["--accessed-by"]("mark data as accessed-by all GPUs before kernel");
@@ -324,9 +321,5 @@ int main(int argc, char **argv) {
     print_header(opts);
     return 0;
   }
-  if (wide) {
-    return run<uint64_t, uint64_t>(opts);
-  } else {
-    return run<uint32_t, uint32_t>(opts);
-  }
+  return run(opts);
 }
