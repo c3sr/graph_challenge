@@ -12,12 +12,12 @@ Count triangles using CUSparse
 #include <clara/clara.hpp>
 #include <fmt/format.h>
 
+#include "pangolin/algorithm/csr/tc_cusparse.hpp"
 #include "pangolin/configure.hpp"
+#include "pangolin/cuda_cxx/stream.hpp"
 #include "pangolin/file/tsv.hpp"
 #include "pangolin/init.hpp"
 #include "pangolin/sparse/csr_val.hpp"
-#include "pangolin/algorithm/csr/tc_cusparse.hpp"
-#include "pangolin/cuda_cxx/stream.hpp"
 
 struct RunOptions {
   int iters;
@@ -180,8 +180,7 @@ int run(RunOptions &opts) {
     nvtxRangePush("count");
     const auto countStart = std::chrono::system_clock::now();
     TC counter(gpus[0]);
-    uint64_t count = counter.count_sync(csr);
-
+    tris = counter.count_sync(csr);
 
     const auto stop = std::chrono::system_clock::now();
     nvtxRangePop(); // count
@@ -214,7 +213,7 @@ int run(RunOptions &opts) {
   }
 
   if (opts.iters > 0) {
-    fmt::print("binary");
+    fmt::print("cusparse");
     std::string gpuStr;
     for (auto gpu : gpus) {
       gpuStr += std::to_string(gpu);
