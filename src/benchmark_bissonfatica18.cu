@@ -27,11 +27,18 @@ struct RunOptions {
   bool readMostly;
   bool accessedBy;
   bool prefetchAsync;
+
+  // force a particular kernel
+  bool threadKernel;
+  bool warpKernel;
+  bool blockSharedKernel;
+  bool blockGlobalKernel;
 };
 
 template <typename Index> int run(RunOptions &opts) {
 
   typedef typename pangolin::EdgeTy<Index> Edge;
+  typedef pangolin::BissonFaticaTC TC;
 
   // read data
   auto start = std::chrono::system_clock::now();
@@ -122,18 +129,30 @@ template <typename Index> int run(RunOptions &opts) {
     const auto countStart = std::chrono::system_clock::now();
 
     // launch counting operations
-    counter.count_async(csr.view(), opts.dimBlock);
+    if (opts.threadKernel) {
+      counter.count_async(csr.view(), opts.dimBlock, TC::Kernel::thread);
+    } else if (opts.warpKernel) {
+      counter.count_async(csr.view(), opts.dimBlock, TC::Kernel::warp);
+    } else if (opts.blockSharedKernel) {
+      counter.count_async(csr.view(), opts.dimBlock, TC::Kernel::blockShared);
+    } else if (opts.blockGlobalKernel) {
+      counter.count_async(csr.view(), opts.dimBlock, TC::Kernel::blockGlobal);
+    } else {
+      counter.count_async(csr.view(), opts.dimBlock);
+    }
 
     // wait for counting operations to finish
     uint64_t total = 0;
     LOG(debug, "wait for counter on GPU {}", counter.device());
     counter.sync();
+
     total += counter.count();
 
     const auto countStop = std::chrono::system_clock::now();
 
     elapsed = (countStop - countStart).count() / 1e9;
     LOG(info, "count time {}s", elapsed);
+    LOG(info, "kernel time {}s", counter.kernel_time());
     LOG(info, "{} triangles ({} teps)", total, csr.nnz() / elapsed);
     countTimes[i] = elapsed;
     elapsed = (countStop - competitionStart).count() / 1e9;
@@ -194,6 +213,11 @@ int main(int argc, char **argv) {
   opts.prefetchAsync = false;
   opts.gpu = 0;
 
+  opts.threadKernel = false;
+  opts.warpKernel = false;
+  opts.blockSharedKernel = false;
+  opts.blockGlobalKernel = false;
+
   bool help = false;
   bool debug = false;
   bool verbose = false;
@@ -212,6 +236,10 @@ int main(int argc, char **argv) {
   cli = cli | clara::Opt(opts.accessedBy)["--accessed-by"]("mark data as accessed-by all GPUs before kernel");
   cli = cli | clara::Opt(opts.prefetchAsync)["--prefetch-async"]("prefetch data to all GPUs before kernel");
   cli = cli | clara::Opt(opts.iters, "N")["-n"]("number of counts");
+  cli = cli | clara::Opt(opts.threadKernel)["--thread"]("use a particular kernel");
+  cli = cli | clara::Opt(opts.warpKernel)["--warp"]("use a particular kernel");
+  cli = cli | clara::Opt(opts.blockSharedKernel)["--blocks"]("use a particular kernel");
+  cli = cli | clara::Opt(opts.blockGlobalKernel)["--blockg"]("use a particular kernel");
   cli = cli | clara::Arg(opts.path, "graph file")("Path to adjacency list").required();
 
   auto result = cli.parse(clara::Args(argc, argv));

@@ -43,7 +43,7 @@ add_exe(NAME benchmark-b-vertex-t-edge-binary SRCS benchmark_b_vertex_t_edge_bin
 add_exe(NAME benchmark-bs-vertex-t-edge-binary SRCS benchmark_bs_vertex_t_edge_binary.cu)
 add_exe(NAME benchmark-bitvector SRCS benchmark_bitvector.cu)
 add_exe(NAME benchmark-binary SRCS benchmark_binary.cu)
-# add_exe(NAME benchmark-bissonfatica18 SRCS benchmark_bissonfatica18.cu)
+add_exe(NAME benchmark-bissonfatica18 SRCS benchmark_bissonfatica18.cu)
 add_exe(NAME benchmark-bmtx-cpu SRCS benchmark_bmtx_cpu.cu)
 add_exe(NAME benchmark-bmtx-gpu SRCS benchmark_bmtx_gpu.cu)
 # add_exe(NAME benchmark-csr-binned SRCS benchmark_csr_binned.cu)
