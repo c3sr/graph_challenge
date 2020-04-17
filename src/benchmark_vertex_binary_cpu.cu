@@ -10,10 +10,11 @@ Count triangles using CPUVertexBinaryTC
 #include <clara/clara.hpp>
 #include <fmt/format.h>
 
-#include "pangolin/algorithm/csr/tc_vertex_binary_cpu.hpp"
 #include "pangolin/configure.hpp"
 #include "pangolin/file/tsv.hpp"
 #include "pangolin/init.hpp"
+
+#include "pangolin/algorithm/csr/tc_vertex_binary_cpu.hpp"
 #include "pangolin/sparse/csr.hpp"
 
 struct RunOptions {
@@ -64,7 +65,7 @@ template <typename Index> int run(RunOptions &opts) {
 
   typedef Index NodeIndex;
   typedef Index EdgeIndex;
-  typedef pangolin::EdgeTy<NodeIndex> GraphEdge;
+  typedef pangolin::DiEdge<NodeIndex> GraphEdge;
   typedef pangolin::CSR<Index> CSR;
   typedef pangolin::file::TSV TSV;
   typedef TSV::edge_type FileEdge;
@@ -92,9 +93,9 @@ template <typename Index> int run(RunOptions &opts) {
     CSR csr;
     for (auto fileEdge : fileEdges) {
       GraphEdge graphEdge;
-      graphEdge.first = fileEdge.src;
-      graphEdge.second = fileEdge.dst;
-      if (graphEdge.first > graphEdge.second) {
+      graphEdge.src = fileEdge.src;
+      graphEdge.dst = fileEdge.dst;
+      if (graphEdge.src > graphEdge.dst) {
         csr.add_next_edge(graphEdge);
       }
     }

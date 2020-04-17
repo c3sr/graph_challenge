@@ -71,8 +71,8 @@ void consume(Buffer<std::vector<typename Mat::edge_type>> &queue, Mat &mat, Work
   typedef typename Mat::index_type Index;
   typedef typename Mat::edge_type Edge;
 
-  auto upperTriangularFilter = [](Edge e) { return e.first < e.second; };
-  // auto lowerTriangularFilter = [](Edge e) { return e.first > e.second; };
+  auto upperTriangularFilter = [](Edge e) { return e.src < e.dst; };
+  // auto lowerTriangularFilter = [](Edge e) { return e.src > e.dst; };
 
   times.wait = 0;
   times.work = 0;
@@ -91,10 +91,10 @@ void consume(Buffer<std::vector<typename Mat::edge_type>> &queue, Mat &mat, Work
       SPDLOG_TRACE(pangolin::logger::console(), "builder: popped {} edges", edges.size());
       auto csrStart = std::chrono::system_clock::now();
       for (const auto &edge : edges) {
-        maxNode = max(edge.first, maxNode);
-        maxNode = max(edge.second, maxNode);
+        maxNode = max(edge.src, maxNode);
+        maxNode = max(edge.dst, maxNode);
         if (upperTriangularFilter(edge)) {
-          // SPDLOG_TRACE(pangolin::logger::console(), "{} {}", edge.first, edge.second);
+          // SPDLOG_TRACE(pangolin::logger::console(), "{} {}", edge.src, edge.dst);
           mat.add_next_edge(edge);
         }
       }
@@ -116,7 +116,7 @@ void consume(Buffer<std::vector<typename Mat::edge_type>> &queue, Mat &mat, Work
   LOG(debug, "builder: {}s csr {}s blocked", times.work, times.wait);
 }
 
-enum class Type { SEQUENTIAL, OVERLAPPED};
+enum class Type { SEQUENTIAL, OVERLAPPED };
 
 struct RunOptions {
   int iters;
@@ -146,7 +146,7 @@ void print_header(const RunOptions &opts) {
 }
 
 template <typename Index> void build_overlapped(pangolin::CSRCOO<Index> &csr, double &ioTime, RunOptions &opts) {
-  typedef pangolin::EdgeTy<Index> Edge;
+  typedef pangolin::DiEdge<Index> Edge;
 
   Buffer<std::vector<Edge>> queue;
   WorkerTimes builderTimes, consumerTimes;
@@ -169,9 +169,9 @@ template <typename Index> void build_overlapped(pangolin::CSRCOO<Index> &csr, do
 }
 
 template <typename Index> void build_sequential(pangolin::CSRCOO<Index> &csr, double &ioTime, RunOptions &opts) {
-  typedef pangolin::EdgeTy<Index> Edge;
-  auto upperTriangularFilter = [](Edge e) { return e.first < e.second; };
-  // auto lowerTriangularFilter = [](Edge e) { return e.first > e.second; };
+  typedef pangolin::DiEdge<Index> Edge;
+  auto upperTriangularFilter = [](Edge e) { return e.src < e.dst; };
+  // auto lowerTriangularFilter = [](Edge e) { return e.src > e.dst; };
 
   auto start = std::chrono::system_clock::now();
   pangolin::EdgeListFile file(opts.path);
@@ -188,7 +188,7 @@ template <typename Index> void build_sequential(pangolin::CSRCOO<Index> &csr, do
 }
 
 template <typename Index> int run(RunOptions &opts) {
-  typedef pangolin::EdgeTy<Index> Edge;
+  typedef pangolin::DiEdge<Index> Edge;
   using pangolin::RcStream;
 
   // times to report

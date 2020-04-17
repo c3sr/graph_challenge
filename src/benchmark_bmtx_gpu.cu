@@ -34,7 +34,7 @@ template <typename NodeIndex, typename EdgeIndex> int run(RunOptions &opts) {
 
   using namespace pangolin;
 
-  typedef typename pangolin::EdgeTy<NodeIndex> Edge;
+  typedef typename pangolin::DiEdge<NodeIndex> Edge;
   typedef TaskGPUTC TC;
   typedef TC::Task Task;
 

@@ -12,10 +12,11 @@ Count triangles using NVGraph
 #include <clara/clara.hpp>
 #include <fmt/format.h>
 
-#include "pangolin/algorithm/csr/tc_nvgraph.hpp"
 #include "pangolin/configure.hpp"
 #include "pangolin/file/tsv.hpp"
 #include "pangolin/init.hpp"
+
+#include "pangolin/algorithm/csr/tc_nvgraph.hpp"
 #include "pangolin/sparse/csr_val.hpp"
 
 struct RunOptions {

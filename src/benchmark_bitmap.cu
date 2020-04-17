@@ -31,7 +31,7 @@ struct RunOptions {
 
 template <typename Index> int run(RunOptions &opts) {
 
-  typedef typename pangolin::EdgeTy<Index> Edge;
+  typedef typename pangolin::DiEdge<Index> Edge;
 
   auto gpus = opts.gpus;
   if (gpus.empty()) {
@@ -75,8 +75,8 @@ template <typename Index> int run(RunOptions &opts) {
     auto iterStart = std::chrono::system_clock::now();
     auto competitionStart = std::chrono::system_clock::now();
     // create csr
-    auto upperTriangularFilter = [](Edge e) { return e.first < e.second; };
-    auto lowerTriangularFilter = [](Edge e) { return e.first > e.second; };
+    auto upperTriangularFilter = [](Edge e) { return e.src < e.dst; };
+    auto lowerTriangularFilter = [](Edge e) { return e.src > e.dst; };
     auto csr = pangolin::CSR<uint64_t>::from_edges(edges.begin(), edges.end(), upperTriangularFilter);
     LOG(debug, "CSR nnz = {} rows = {}", csr.nnz(), csr.num_rows());
     elapsed = (std::chrono::system_clock::now() - iterStart).count() / 1e9;

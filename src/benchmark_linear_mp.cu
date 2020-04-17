@@ -17,10 +17,10 @@ Use one thread for each triangle counter through OpenMP.
 
 #include "pangolin/algorithm/tc_edge_linear.cuh"
 #include "pangolin/configure.hpp"
+#include "pangolin/cuda_cxx/rc_stream.hpp"
 #include "pangolin/file/edge_list_file.hpp"
 #include "pangolin/init.hpp"
 #include "pangolin/sparse/csr_coo.hpp"
-#include "pangolin/cuda_cxx/rc_stream.hpp"
 
 int main(int argc, char **argv) {
 
@@ -43,20 +43,14 @@ int main(int argc, char **argv) {
   clara::Parser cli;
   cli = cli | clara::Help(help);
   cli = cli | clara::Opt(debug)["--debug"]("print debug messages to stderr");
-  cli = cli |
-        clara::Opt(verbose)["--verbose"]("print verbose messages to stderr");
+  cli = cli | clara::Opt(verbose)["--verbose"]("print verbose messages to stderr");
   cli = cli | clara::Opt(gpus, "ids")["-g"]("gpus to use");
-  cli = cli | clara::Opt(readMostly)["--read-mostly"](
-                  "mark data as read-mostly by all gpus before kernel");
-  cli = cli | clara::Opt(accessedBy)["--accessed-by"](
-                  "mark data as accessed-by all GPUs before kernel");
-  cli = cli | clara::Opt(prefetchAsync)["--prefetch-async"](
-                  "prefetch data to all GPUs before kernel");
+  cli = cli | clara::Opt(readMostly)["--read-mostly"]("mark data as read-mostly by all gpus before kernel");
+  cli = cli | clara::Opt(accessedBy)["--accessed-by"]("mark data as accessed-by all GPUs before kernel");
+  cli = cli | clara::Opt(prefetchAsync)["--prefetch-async"]("prefetch data to all GPUs before kernel");
   cli = cli | clara::Opt(iters, "N")["-n"]("number of counts");
-  cli = cli |
-  clara::Opt(dimBlock, "block-dim")["-b"]("Number of threads in a block");
-  cli =
-      cli | clara::Arg(path, "graph file")("Path to adjacency list").required();
+  cli = cli | clara::Opt(dimBlock, "block-dim")["-b"]("Number of threads in a block");
+  cli = cli | clara::Arg(path, "graph file")("Path to adjacency list").required();
 
   auto result = cli.parse(clara::Args(argc, argv));
   if (!result) {
@@ -87,8 +81,7 @@ int main(int argc, char **argv) {
     }
     LOG(debug, cmd);
   }
-  LOG(debug, "pangolin version: {}.{}.{}", PANGOLIN_VERSION_MAJOR,
-      PANGOLIN_VERSION_MINOR, PANGOLIN_VERSION_PATCH);
+  LOG(debug, "pangolin version: {}.{}.{}", PANGOLIN_VERSION_MAJOR, PANGOLIN_VERSION_MINOR, PANGOLIN_VERSION_PATCH);
   LOG(debug, "pangolin branch:  {}", PANGOLIN_GIT_REFSPEC);
   LOG(debug, "pangolin sha:     {}", PANGOLIN_GIT_HASH);
   LOG(debug, "pangolin changes: {}", PANGOLIN_GIT_LOCAL_CHANGES);
@@ -119,9 +112,8 @@ int main(int argc, char **argv) {
     if (managed) {
       LOG(debug, "all devices support concurrent managed access");
     } else {
-      LOG(warn,
-          "at least one device does not support concurrent managed access. "
-          "read-duplicate may not occur");
+      LOG(warn, "at least one device does not support concurrent managed access. "
+                "read-duplicate may not occur");
     }
   }
 
@@ -133,11 +125,9 @@ int main(int argc, char **argv) {
       CUDA_RUNTIME(cudaGetDeviceProperties(&prop, gpu));
       // if non-zero, setAccessedBy has no effect
       if (prop.pageableMemoryAccessUsesHostPageTables) {
-        LOG(warn, "device {} uses host page takes for pageable memory accesses",
-            gpu);
+        LOG(warn, "device {} uses host page takes for pageable memory accesses", gpu);
       }
-      hostPageTables =
-          hostPageTables || prop.pageableMemoryAccessUsesHostPageTables;
+      hostPageTables = hostPageTables || prop.pageableMemoryAccessUsesHostPageTables;
     }
   }
 
@@ -161,8 +151,8 @@ int main(int argc, char **argv) {
   auto start = std::chrono::system_clock::now();
   pangolin::EdgeListFile file(path);
 
-  std::vector<pangolin::EdgeTy<uint64_t>> edges;
-  std::vector<pangolin::EdgeTy<uint64_t>> fileEdges;
+  std::vector<pangolin::DiEdge<uint64_t>> edges;
+  std::vector<pangolin::DiEdge<uint64_t>> fileEdges;
   while (file.get_edges(fileEdges, 10)) {
     edges.insert(edges.end(), fileEdges.begin(), fileEdges.end());
   }
@@ -189,11 +179,8 @@ int main(int argc, char **argv) {
     CUDA_RUNTIME(cudaSetDevice(gpus[0]));
     nvtxRangePush("create CSR");
     start = std::chrono::system_clock::now();
-    auto upperTriangular = [](pangolin::EdgeTy<uint64_t> e) {
-      return e.first < e.second;
-    };
-    auto csr = pangolin::CSRCOO<uint64_t>::from_edges(edges.begin(), edges.end(),
-                                                   upperTriangular);
+    auto upperTriangular = [](pangolin::DiEdge<uint64_t> e) { return e.src < e.dst; };
+    auto csr = pangolin::CSRCOO<uint64_t>::from_edges(edges.begin(), edges.end(), upperTriangular);
     nvtxRangePop();
     LOG(debug, "nnz = {}", csr.nnz());
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
@@ -234,8 +221,7 @@ int main(int argc, char **argv) {
 
       // prefetch
       if (prefetchAsync) {
-        LOG(debug, "omp thread {}: prefetch csr to device {}",
-            omp_get_thread_num(), gpu);
+        LOG(debug, "omp thread {}: prefetch csr to device {}", omp_get_thread_num(), gpu);
         nvtxRangePush("prefetch");
         csr.prefetch_async(gpu, stream.stream());
         nvtxRangePop();
@@ -245,26 +231,23 @@ int main(int argc, char **argv) {
       nvtxRangePush("count");
 
       // create async counters
-      LOG(debug, "omp thread {}: create device {} counter",
-          omp_get_thread_num(), gpu);
+      LOG(debug, "omp thread {}: create device {} counter", omp_get_thread_num(), gpu);
       pangolin::LinearTC counter(gpu, stream);
 
       // determine the number of edges per gpu
       const size_t edgesPerGPU = (csr.nnz() + gpus.size() - 1) / gpus.size();
-      LOG(debug, "omp thread {}: {} edges per GPU", omp_get_thread_num(),
-          edgesPerGPU);
+      LOG(debug, "omp thread {}: {} edges per GPU", omp_get_thread_num(), edgesPerGPU);
 
       // launch counting operations
       const size_t edgeStart = edgesPerGPU * gpuIdx;
       const size_t edgeStop = std::min(edgeStart + edgesPerGPU, csr.nnz());
       const size_t numEdges = edgeStop - edgeStart;
-      LOG(debug, "omp thread {}: start async count on GPU {} ({} edges)",
-          omp_get_thread_num(), counter.device(), numEdges);
+      LOG(debug, "omp thread {}: start async count on GPU {} ({} edges)", omp_get_thread_num(), counter.device(),
+          numEdges);
       counter.count_async(csr.view(), edgeStart, numEdges, dimBlock);
 
       // wait for counting operations to finish
-      LOG(debug, "omp thread {}: wait for counter on GPU {}",
-          omp_get_thread_num(), counter.device());
+      LOG(debug, "omp thread {}: wait for counter on GPU {}", omp_get_thread_num(), counter.device());
       counter.sync();
       nvtxRangePop();
 #pragma omp atomic

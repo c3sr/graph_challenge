@@ -11,10 +11,11 @@ Count triangles using the per-edge binary search
 #include <clara/clara.hpp>
 #include <fmt/format.h>
 
-#include "pangolin/algorithm/tc_vertex_cpu.cuh"
 #include "pangolin/configure.hpp"
 #include "pangolin/file/bmtx_stream.hpp"
 #include "pangolin/init.hpp"
+
+#include "pangolin/algorithm/tc_vertex_cpu.cuh"
 #include "pangolin/sparse/csr_binned.hpp"
 
 struct RunOptions {
@@ -33,7 +34,7 @@ template <typename NodeIndex, typename EdgeIndex> int run(RunOptions &opts) {
 
   using namespace pangolin;
 
-  typedef typename pangolin::EdgeTy<NodeIndex> Edge;
+  typedef typename pangolin::DiEdge<NodeIndex> Edge;
   typedef VertexCPUTC::Task Task;
 
   auto gpus = opts.gpus;

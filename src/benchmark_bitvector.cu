@@ -11,10 +11,11 @@ Count triangles using the per-edge binary search
 #include <clara/clara.hpp>
 #include <fmt/format.h>
 
-#include "pangolin/algorithm/tc_vertex_warp_bitvector.cuh"
 #include "pangolin/configure.hpp"
 #include "pangolin/file/edge_list_file.hpp"
 #include "pangolin/init.hpp"
+
+#include "pangolin/algorithm/tc_vertex_warp_bitvector.cuh"
 #include "pangolin/sparse/csr.hpp"
 
 struct RunOptions {
@@ -31,7 +32,7 @@ struct RunOptions {
 
 template <typename Index> int run(RunOptions &opts) {
 
-  typedef typename pangolin::EdgeTy<Index> Edge;
+  typedef typename pangolin::DiEdge<Index> Edge;
 
   auto gpus = opts.gpus;
   if (gpus.empty()) {
@@ -75,9 +76,9 @@ template <typename Index> int run(RunOptions &opts) {
     auto iterStart = std::chrono::system_clock::now();
     auto competitionStart = std::chrono::system_clock::now();
     // create csr
-    auto upperTriangularFilter = [](Edge e) { return e.first < e.second; };
-    auto lowerTriangularFilter = [](Edge e) { return e.first > e.second; };
-    auto csr = pangolin::CSR<uint64_t>::from_edges(edges.begin(), edges.end(), upperTriangularFilter);
+    auto upperTriangularFilter = [](Edge e) { return e.src < e.dst; };
+    auto lowerTriangularFilter = [](Edge e) { return e.src > e.dst; };
+    auto csr = pangolin::CSR<Index>::from_edges(edges.begin(), edges.end(), upperTriangularFilter);
     LOG(debug, "CSR nnz = {} rows = {}", csr.nnz(), csr.num_rows());
     elapsed = (std::chrono::system_clock::now() - iterStart).count() / 1e9;
     LOG(info, "create CSR time {}s", elapsed);

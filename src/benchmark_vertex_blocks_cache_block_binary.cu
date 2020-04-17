@@ -14,8 +14,13 @@ Binary search of dst neighbor list into src list
 #include <nvToolsExt.h>
 
 #include "clara/clara.hpp"
-#include "pangolin/pangolin.cuh"
-#include "pangolin/pangolin.hpp"
+
+#include "pangolin/configure.hpp"
+#include "pangolin/file/edge_list_file.hpp"
+#include "pangolin/init.hpp"
+
+#include "pangolin/algorithm/tc_vertex_blocks_cache_block_binary.cuh"
+#include "pangolin/sparse/csr.hpp"
 
 int main(int argc, char **argv) {
 
@@ -38,22 +43,16 @@ int main(int argc, char **argv) {
   clara::Parser cli;
   cli = cli | clara::Help(help);
   cli = cli | clara::Opt(debug)["--debug"]("print debug messages to stderr");
-  cli = cli |
-        clara::Opt(verbose)["--verbose"]("print verbose messages to stderr");
+  cli = cli | clara::Opt(verbose)["--verbose"]("print verbose messages to stderr");
   cli = cli | clara::Opt(gpus, "dev ids")["-g"]("gpus to use");
-  cli = cli | clara::Opt(readMostly)["--read-mostly"](
-                  "mark data as read-mostly by all gpus before kernel");
-  cli = cli | clara::Opt(accessedBy)["--accessed-by"](
-                  "mark data as accessed-by all GPUs before kernel");
-  cli = cli | clara::Opt(prefetchAsync)["--prefetch-async"](
-                  "prefetch data to all GPUs before kernel");
+  cli = cli | clara::Opt(readMostly)["--read-mostly"]("mark data as read-mostly by all gpus before kernel");
+  cli = cli | clara::Opt(accessedBy)["--accessed-by"]("mark data as accessed-by all GPUs before kernel");
+  cli = cli | clara::Opt(prefetchAsync)["--prefetch-async"]("prefetch data to all GPUs before kernel");
   cli = cli | clara::Opt(iters, "N")["-n"]("number of counts");
-  cli = cli | clara::Opt(upperTriangular)["--upper-triangular"](
-                  "convert to DAG by dst > src (default lower-triangular)");
-  cli = cli |
-        clara::Opt(rowCacheSz, "INT")["-r"]("Size of shared-memory row cache");
   cli =
-      cli | clara::Arg(path, "graph file")("Path to adjacency list").required();
+      cli | clara::Opt(upperTriangular)["--upper-triangular"]("convert to DAG by dst > src (default lower-triangular)");
+  cli = cli | clara::Opt(rowCacheSz, "INT")["-r"]("Size of shared-memory row cache");
+  cli = cli | clara::Arg(path, "graph file")("Path to adjacency list").required();
 
   auto result = cli.parse(clara::Args(argc, argv));
   if (!result) {
@@ -84,8 +83,7 @@ int main(int argc, char **argv) {
     }
     LOG(debug, cmd);
   }
-  LOG(debug, "pangolin version: {}.{}.{}", PANGOLIN_VERSION_MAJOR,
-      PANGOLIN_VERSION_MINOR, PANGOLIN_VERSION_PATCH);
+  LOG(debug, "pangolin version: {}.{}.{}", PANGOLIN_VERSION_MAJOR, PANGOLIN_VERSION_MINOR, PANGOLIN_VERSION_PATCH);
   LOG(debug, "pangolin branch:  {}", PANGOLIN_GIT_REFSPEC);
   LOG(debug, "pangolin sha:     {}", PANGOLIN_GIT_HASH);
   LOG(debug, "pangolin changes: {}", PANGOLIN_GIT_LOCAL_CHANGES);
@@ -104,8 +102,8 @@ int main(int argc, char **argv) {
   pangolin::EdgeListFile file(path);
 
   LOG(info, "using {}B ints", sizeof(uint32_t));
-  std::vector<pangolin::EdgeTy<uint32_t>> edges;
-  std::vector<pangolin::EdgeTy<uint32_t>> fileEdges;
+  std::vector<pangolin::DiEdge<uint32_t>> edges;
+  std::vector<pangolin::DiEdge<uint32_t>> fileEdges;
   while (file.get_edges(fileEdges, 10)) {
     edges.insert(edges.end(), fileEdges.begin(), fileEdges.end());
   }
@@ -121,17 +119,10 @@ int main(int argc, char **argv) {
     // create csr
     nvtxRangePush("create csr");
     start = std::chrono::system_clock::now();
-    auto upperTriangularFilter = [](pangolin::EdgeTy<uint32_t> e) {
-      return e.first < e.second;
-    };
-    auto lowerTriangularFilter = [](pangolin::EdgeTy<uint32_t> e) {
-      return e.first > e.second;
-    };
-    auto csr = upperTriangular
-                   ? pangolin::CSR<uint32_t>::from_edges(
-                         edges.begin(), edges.end(), upperTriangularFilter)
-                   : pangolin::CSR<uint32_t>::from_edges(
-                         edges.begin(), edges.end(), lowerTriangularFilter);
+    auto upperTriangularFilter = [](pangolin::DiEdge<uint32_t> e) { return e.src < e.dst; };
+    auto lowerTriangularFilter = [](pangolin::DiEdge<uint32_t> e) { return e.src > e.dst; };
+    auto csr = upperTriangular ? pangolin::CSR<uint32_t>::from_edges(edges.begin(), edges.end(), upperTriangularFilter)
+                               : pangolin::CSR<uint32_t>::from_edges(edges.begin(), edges.end(), lowerTriangularFilter);
 
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
     nvtxRangePop(); // create csr
@@ -188,8 +179,7 @@ int main(int argc, char **argv) {
     std::vector<pangolin::VertexBlocksCacheBlockBinary> counters;
     for (int dev : gpus) {
       LOG(debug, "create device {} counter", dev);
-      counters.push_back(
-          pangolin::VertexBlocksCacheBlockBinary(dev, rowCacheSz));
+      counters.push_back(pangolin::VertexBlocksCacheBlockBinary(dev, rowCacheSz));
     }
 
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
@@ -204,8 +194,7 @@ int main(int argc, char **argv) {
     for (auto &counter : counters) {
       const size_t rowStop = std::min(rowStart + rowsPerGPU, csr.num_rows());
       const size_t numRows = rowStop - rowStart;
-      LOG(debug, "start async count on GPU {} ({} rows)", counter.device(),
-          numRows);
+      LOG(debug, "start async count on GPU {} ({} rows)", counter.device(), numRows);
       counter.count_async(csr.view(), rowStart, numRows);
       rowStart += rowsPerGPU;
     }

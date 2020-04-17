@@ -64,7 +64,7 @@ template <typename Mat> void consume(Buffer<std::vector<typename Mat::edge_type>
   typedef typename Mat::edge_type Edge;
 
   double queueTime = 0, csrTime = 0;
-  auto upperTriangular = [](const Edge &e) { return e.first < e.second; };
+  auto upperTriangular = [](const Edge &e) { return e.src < e.dst; };
 
   // keep grabbing while queue is filling
   Index maxNode = 0;
@@ -80,10 +80,10 @@ template <typename Mat> void consume(Buffer<std::vector<typename Mat::edge_type>
       SPDLOG_TRACE(pangolin::logger::console(), "builder: popped {} edges", edges.size());
       auto csrStart = std::chrono::system_clock::now();
       for (const auto &edge : edges) {
-        maxNode = max(edge.first, maxNode);
-        maxNode = max(edge.second, maxNode);
+        maxNode = max(edge.src, maxNode);
+        maxNode = max(edge.dst, maxNode);
         if (upperTriangular(edge)) {
-          // SPDLOG_TRACE(pangolin::logger::console(), "{} {}", edge.first, edge.second);
+          // SPDLOG_TRACE(pangolin::logger::console(), "{} {}", edge.src, edge.dst);
           mat.add_next_edge(edge);
         }
       }
@@ -148,7 +148,7 @@ void print_header(const RunOptions &opts) {
 }
 
 template <typename Index> int run(RunOptions &opts) {
-  typedef pangolin::EdgeTy<Index> Edge;
+  typedef pangolin::DiEdge<Index> Edge;
   using pangolin::RcStream;
 
   auto gpus = opts.gpus;
