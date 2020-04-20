@@ -1,5 +1,7 @@
 # graph_challenge
 
+[![Build Status](https://travis-ci.com/c3sr/graph_challenge.svg?branch=master)](https://travis-ci.com/c3sr/graph_challenge)
+
 ## Getting Started
 
 ```
