@@ -50,24 +50,40 @@ python graph-datasets/tools/convert.py ~/graphs/graphtsv -t bel
 
 ## Citing
 
-Our 2018 submission may be cited with the following bibtex entry
-
-    @inproceedings{mailthody2018collaborative,
-    title={Collaborative (CPU+ GPU) Algorithms for Triangle Counting and Truss Decomposition},
-    author={Mailthody, Vikram S and Date, Ketan and Qureshi, Zaid and Pearson, Carl and Nagi, Rakesh and Xiong, Jinjun and Hwu, Wen-mei},
-    booktitle={2018 IEEE High Performance extreme Computing Conference (HPEC)},
-    pages={1--7},
-    year={2018},
-    organization={IEEE}
-    }
-
 Our 2019 submissions may be cited with the following bibtex entry
 
-    @inproceedings{mailthody2018collaborative,
-    title={Collaborative (CPU+ GPU) Algorithms for Triangle Counting and Truss Decomposition},
-    author={Mailthody, Vikram S and Date, Ketan and Qureshi, Zaid and Pearson, Carl and Nagi, Rakesh and Xiong, Jinjun and Hwu, Wen-mei},
-    booktitle={2018 IEEE High Performance extreme Computing Conference (HPEC)},
-    pages={1--7},
-    year={2018},
-    organization={IEEE}
-    }
+```bibtex
+@INPROCEEDINGS{8916285,
+author={M. {Almasri} and O. {Anjum} and C. {Pearson} and Z. {Qureshi} and V. S. {Mailthody} and R. {Nagi} and J. {Xiong} and W. {Hwu}},
+booktitle={2019 IEEE High Performance Extreme Computing Conference (HPEC)},
+title={Update on k-truss Decomposition on GPU},
+year={2019},
+volume={},
+number={},
+pages={1-7},
+}
+```
+
+```bibtex
+@INPROCEEDINGS{8916547,
+ author={C. {Pearson} and M. {Almasri} and O. {Anjum} and V. S. {Mailthody} and Z. {Qureshi} and R. {Nagi} and J. {Xiong} and W. {Hwu}},
+ booktitle={2019 IEEE High Performance Extreme Computing Conference (HPEC)},
+ title={Update on Triangle Counting on GPU},
+ year={2019},
+ volume={},
+ number={},
+ pages={1-7},
+ } 
+```
+
+Our 2018 submission may be cited with the following bibtex entry
+
+```bibtex
+@INPROCEEDINGS{8547517,
+author={V. S. {Mailthody} and K. {Date} and Z. {Qureshi} and C. {Pearson} and R. {Nagi} and J. {Xiong} and W. {Hwu}}, booktitle={2018 IEEE High Performance extreme Computing Conference (HPEC)},
+title={Collaborative (CPU + GPU) Algorithms for Triangle Counting and Truss Decomposition},
+year={2018},
+volume={},
+number={},
+pages={1-7},
+```

@@ -37,5 +37,6 @@ tools/*.tsv
 tools/*.tsv.gz
 tools/*.bel
 tools/*.csv
+tools/*.pyc
 
 include/pangolin/configure.hpp

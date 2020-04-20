@@ -1,0 +1,30 @@
+language: minimal
+
+jobs:
+  include:
+    # 18.04/amd64/cuda-10-2, NUMA Release
+  - dist: bionic
+    arch: amd64
+    env:
+      - CUDA_VERSION=102
+      - BUILD_TYPE=Release
+      - USE_NUMA=1
+      - USE_MPI=1
+    # 18.04 ppc64le cuda-10-2 Release
+  - dist: bionic
+    arch: ppc64le
+    env:
+      - CUDA_VERSION=102
+      - BUILD_TYPE=Release
+      - USE_NUMA=1
+      - USE_MPI=1
+
+cache:
+  directories:
+    $HOME/cmake
+
+install:
+  - ci/install.sh || travis_terminate 1;
+
+script:
+  - ci/script.sh || travis_terminate 1;
