@@ -29,7 +29,11 @@ git checkout -b my-branch
 
 ## Datasets
 
-Graphs may be downloaded using [cwpearson/graph-datasets](https://github.com/cwpearson/graph-datasets).
+Some dataset information is here:
+
+https://graphchallenge-datasets.netlify.com
+
+Graphs may be downloaded using [cwpearson/graph-datasets2](https://github.com/cwpearson/graph-datasets) (preferred) or [cwpearson/graph-datasets](https://github.com/cwpearson/graph-datasets).
 
 ```
 mkdir ~/graphs
@@ -43,7 +47,6 @@ To speed up I/O, it is recommended to convert the graphs to a binary format
 ```
 python graph-datasets/tools/convert.py ~/graphs/graphtsv -t bel
 ```
-
 
 ## Citing
 

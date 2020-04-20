@@ -7,13 +7,14 @@
 #include "pangolin/pangolin.cuh"
 #include "pangolin/pangolin.hpp"
 
+#include "pangolin/algorithm/ktruss_serial.cuh"
+
 #define UT uint32_t
 
 
 int main(int argc, char **argv) {
 
-   pangolin::init(); 
-  pangolin::Config config;
+  pangolin::init(); 
 
   std::vector<int> gpus;
   std::string path;
@@ -90,8 +91,8 @@ int main(int argc, char **argv) {
   auto start = std::chrono::system_clock::now();
   pangolin::EdgeListFile file(path);
 
-  std::vector<pangolin::EdgeTy<UT>> edges;
-  std::vector<pangolin::EdgeTy<UT>> fileEdges;
+  std::vector<pangolin::DiEdge<UT>> edges;
+  std::vector<pangolin::DiEdge<UT>> fileEdges;
   while (file.get_edges(fileEdges, 10)) {
     edges.insert(edges.end(), fileEdges.begin(), fileEdges.end());
   }
@@ -106,10 +107,10 @@ int main(int argc, char **argv) {
   for (int i = 0; i < iters; ++i) {
     // create csr
     start = std::chrono::system_clock::now();
-    auto upperTriangular = [](pangolin::EdgeTy<UT> e) {
+    auto upperTriangular = [](pangolin::DiEdge<UT> e) {
       return true; //e.first < e.second;
     };
-    auto csr = pangolin::COO<UT>::from_edges(edges.begin(), edges.end(),
+    auto csr = pangolin::CSRCOO<UT>::from_edges(edges.begin(), edges.end(),
                                                    upperTriangular);
     LOG(debug, "nnz = {}", csr.nnz());
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;

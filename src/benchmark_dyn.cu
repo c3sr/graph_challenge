@@ -1,7 +1,6 @@
 /*!
 
-Count triangles using the linear search.
-Simultaneously read and build the CSR with a queue of edges.
+Count triangles using warp-granularity dynamic algorithm selection
 
 */
 
@@ -9,12 +8,12 @@ Simultaneously read and build the CSR with a queue of edges.
 #include <thread>
 #include <vector>
 
-#include <clara/clara.hpp>
-#include <fmt/format.h>
-
 #include <nvToolsExt.h>
 
-#include "pangolin/algorithm/tc_edge_linear.cuh"
+#include "clara/clara.hpp"
+#include <fmt/format.h>
+
+#include "pangolin/algorithm/tc_edge_dyn.cuh"
 #include "pangolin/bounded_buffer.hpp"
 #include "pangolin/configure.hpp"
 #include "pangolin/cuda_cxx/rc_stream.hpp"
@@ -24,6 +23,7 @@ Simultaneously read and build the CSR with a queue of edges.
 
 // Buffer is a BoundedBuffer with two entries (double buffer)
 template <typename T> using Buffer = pangolin::BoundedBuffer<T, 2>;
+using pangolin::RcStream;
 
 template <typename V> void print_vec(const V &vec, const std::string &sep) {
   for (const auto &e : vec) {
@@ -115,11 +115,12 @@ struct RunOptions {
   bool readMostly;
   bool accessedBy;
   bool prefetchAsync;
+  float scaleBinary;
   bool preCountBarrier;
 };
 
-void print_header(const RunOptions &opts) {
-  fmt::print("benchmark{0}bs{0}gpus{0}graph{0}nodes{0}edges{0}tris", opts.sep);
+void print_header(RunOptions &opts) {
+  fmt::print("bmark{0}bs{0}sb{0}graph{0}nodes{0}edges{0}tris", opts.sep);
   for (auto i = 0; i < opts.iters; ++i) {
     fmt::print("{}total_time{}", opts.sep, i);
   }
@@ -149,9 +150,8 @@ void print_header(const RunOptions &opts) {
 
 template <typename Index> int run(RunOptions &opts) {
   typedef pangolin::DiEdge<Index> Edge;
-  using pangolin::RcStream;
 
-  auto gpus = opts.gpus;
+  std::vector<int> gpus = opts.gpus;
   if (gpus.empty()) {
     LOG(warn, "no GPUs provided on command line, using GPU 0");
     gpus.push_back(0);
@@ -161,51 +161,9 @@ template <typename Index> int run(RunOptions &opts) {
   std::vector<RcStream> streams;
   for (const auto &gpu : gpus) {
     streams.push_back(RcStream(gpu));
+    LOG(debug, "created stream {} for gpu {}", streams.back(), gpu);
   }
 
-  // Check for unified memory support
-  bool managed = true;
-  for (auto gpu : gpus) {
-    cudaDeviceProp prop;
-    CUDA_RUNTIME(cudaGetDeviceProperties(&prop, gpu));
-    // We check for concurrentManagedAccess, as devices with only the
-    // managedAccess property have extra synchronization requirements.
-    if (prop.concurrentManagedAccess) {
-      LOG(debug, "device {} prop.concurrentManagedAccess=1", gpu);
-    } else {
-      LOG(warn, "device {} prop.concurrentManagedAccess=0", gpu);
-    }
-    managed = managed && prop.concurrentManagedAccess;
-    if (prop.canMapHostMemory) {
-      LOG(debug, "device {} prop.canMapHostMemory=1", gpu);
-    } else {
-      LOG(warn, "device {} prop.canMapHostMemory=0", gpu);
-    }
-  }
-
-  if (!managed) {
-    opts.prefetchAsync = false;
-    LOG(warn, "disabling prefetch");
-    opts.readMostly = false;
-    LOG(warn, "disabling readMostly");
-    opts.accessedBy = false;
-    LOG(warn, "disabling accessedBy");
-  }
-
-  // Check for mapping host memory memory support
-  for (auto gpu : gpus) {
-    CUDA_RUNTIME(cudaSetDevice(gpu));
-    unsigned int flags = 0;
-    CUDA_RUNTIME(cudaGetDeviceFlags(&flags));
-    if (flags & cudaDeviceMapHost) {
-      LOG(debug, "device {} cudaDeviceMapHost=1", gpu);
-    } else {
-      LOG(warn, "device {} cudaDeviceMapHost=0", gpu);
-      // exit(-1);
-    }
-  }
-
-  // count `iters` times
   std::vector<double> totalTimes;
   std::vector<double> gpuTimes;
   std::vector<double> countTimes;
@@ -213,11 +171,11 @@ template <typename Index> int run(RunOptions &opts) {
   uint64_t nnz;
   uint64_t numRows;
   uint64_t tris;
+  // create csr and count `opts.iters` times
   for (int i = 0; i < opts.iters; ++i) {
 
-    // read data / build
+    // read data
     const auto totalStart = std::chrono::system_clock::now();
-
     Buffer<std::vector<Edge>> queue;
     pangolin::CSRCOO<Index> csr;
     // start a thread to read the matrix data
@@ -232,35 +190,35 @@ template <typename Index> int run(RunOptions &opts) {
     LOG(debug, "waiting for CSR builder...");
     builder.join();
     assert(queue.empty());
+
     double elapsed = (std::chrono::system_clock::now() - totalStart).count() / 1e9;
-    LOG(info, "read_data/build time {}s", elapsed);
-    LOG(debug, "CSR: nnz = {}, rows = {}", csr.nnz(), csr.num_rows());
+    LOG(info, "io/csr time {}s", elapsed);
+    LOG(debug, "CSR nnz = {} rows = {}", csr.nnz(), csr.num_rows());
+    LOG(debug, "CSR cap = {}MB size = {}MB", csr.capacity_bytes() / 1024 / 1024, csr.size_bytes() / 1024 / 1024);
 
     const auto gpuStart = std::chrono::system_clock::now();
 
     // read-mostly
     nvtxRangePush("read-mostly");
+    auto start = std::chrono::system_clock::now();
     if (opts.readMostly) {
       csr.read_mostly();
     }
-    elapsed = (std::chrono::system_clock::now() - gpuStart).count() / 1e9;
+    elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
     nvtxRangePop();
     LOG(info, "read-mostly CSR time {}s", elapsed);
 
     // accessed-by
-    nvtxRangePush("accessed-by");
-    auto start = std::chrono::system_clock::now();
+    start = std::chrono::system_clock::now();
     if (opts.accessedBy) {
       for (const auto &gpu : gpus) {
         csr.accessed_by(gpu);
       }
     }
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
-    nvtxRangePop();
     LOG(info, "accessed-by CSR time {}s", elapsed);
 
     // prefetch
-    nvtxRangePush("prefetch");
     start = std::chrono::system_clock::now();
     if (opts.prefetchAsync) {
       for (size_t gpuIdx = 0; gpuIdx < gpus.size(); ++gpuIdx) {
@@ -270,28 +228,31 @@ template <typename Index> int run(RunOptions &opts) {
       }
     }
     elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
-    nvtxRangePop();
     LOG(info, "prefetch CSR time {}s", elapsed);
 
     if (opts.preCountBarrier) {
       LOG(debug, "sync streams after hints");
-      for (auto stream : streams) {
+      for (auto &stream : streams) {
         stream.sync();
       }
     }
+
+    LOG(debug, "binary cost scaling: {}", opts.scaleBinary);
 
     // count triangles
     nvtxRangePush("count");
     const auto countStart = std::chrono::system_clock::now();
 
     // create async counters
-    std::vector<pangolin::LinearTC> counters;
+    std::vector<pangolin::EdgeWarpDynTC> counters;
     for (size_t gpuIdx = 0; gpuIdx < gpus.size(); ++gpuIdx) {
       auto dev = gpus[gpuIdx];
-      auto &stream = streams[gpuIdx];
+      auto stream = streams[gpuIdx];
       LOG(debug, "create device {} counter", dev);
-      counters.push_back(pangolin::LinearTC(dev, stream));
+      counters.push_back(std::move(pangolin::EdgeWarpDynTC(dev, stream, opts.scaleBinary)));
     }
+    elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
+    LOG(info, "counter ctor time {}s", elapsed);
 
     // determine the number of edges per gpu
     const size_t edgesPerGPU = (csr.nnz() + gpus.size() - 1) / gpus.size();
@@ -323,7 +284,6 @@ template <typename Index> int run(RunOptions &opts) {
     nnz = csr.nnz();
     numRows = csr.num_rows();
 
-    // record times
     const double totalElapsed = (stop - totalStart).count() / 1e9;
     const double gpuElapsed = (stop - gpuStart).count() / 1e9;
     const double countElapsed = (stop - countStart).count() / 1e9;
@@ -347,13 +307,9 @@ template <typename Index> int run(RunOptions &opts) {
   }
 
   if (opts.iters > 0) {
-    fmt::print("linear-io-queue");
+    fmt::print("dyn");
     fmt::print("{}{}", opts.sep, opts.blockSize);
-    std::string gpuStr;
-    for (auto gpu : gpus) {
-      gpuStr += std::to_string(gpu);
-    }
-    fmt::print("{}{}", opts.sep, gpuStr);
+    fmt::print("{}{}", opts.sep, opts.scaleBinary);
     fmt::print("{}{}", opts.sep, opts.path);
     fmt::print("{}{}", opts.sep, numRows);
     fmt::print("{}{}", opts.sep, nnz);
@@ -375,6 +331,7 @@ template <typename Index> int run(RunOptions &opts) {
     for (const auto &s : kernelTimes) {
       fmt::print("{}{}", opts.sep, nnz / s);
     }
+
     fmt::print("\n");
   }
 
@@ -385,41 +342,42 @@ int main(int argc, char **argv) {
 
   pangolin::init();
 
-  // options not passed to run
   bool help = false;
   bool debug = false;
   bool verbose = false;
+  bool quiet = false;
   bool wide = false;
   bool header = false;
 
-  // options passed to run
   RunOptions opts;
+  opts.sep = ",";
+  opts.blockSize = 512;
   opts.iters = 1;
   opts.readMostly = false;
   opts.accessedBy = false;
   opts.prefetchAsync = false;
-  opts.blockSize = 512;
-  opts.sep = ",";
+  opts.scaleBinary = 0.25;
   opts.preCountBarrier = true;
 
   clara::Parser cli;
   cli = cli | clara::Help(help);
   cli = cli | clara::Opt(debug)["--debug"]("print debug messages to stderr");
   cli = cli | clara::Opt(verbose)["--verbose"]("print verbose messages to stderr");
-  cli = cli | clara::Opt(wide)["--wide"]("64 bit node IDs");
-  cli = cli | clara::Opt(header)["--header"]("Only print CSV header, don't run");
-  cli = cli | clara::Opt(opts.gpus, "ids")["-g"]("gpus to use");
+  cli = cli | clara::Opt(quiet)["--quiet"]("only print errors");
+  cli = cli | clara::Opt(wide)["--wide"]("64-bit node IDs");
+  cli = cli | clara::Opt(header)["--header"]("only print CSV header");
+  cli = cli | clara::Opt(opts.gpus, "dev ids")["-g"]("gpus to use");
+  cli = cli | clara::Opt(opts.blockSize, "block-dim")["--bs"]("Number of threads in a block");
   cli = cli | clara::Opt(opts.readMostly)["--read-mostly"]("mark data as read-mostly by all gpus before kernel");
   cli = cli | clara::Opt(opts.accessedBy)["--accessed-by"]("mark data as accessed-by all GPUs before kernel");
   cli = cli | clara::Opt(opts.prefetchAsync)["--prefetch-async"]("prefetch data to all GPUs before kernel");
   cli = cli | clara::Opt(opts.iters, "N")["-n"]("number of counts");
-  cli = cli | clara::Opt(opts.blockSize, "N")["--bs"]("block size for counting kernel");
-  cli = cli | clara::Opt(opts.preCountBarrier)["--barrier"]("barrier before count kernels");
+  cli = cli | clara::Opt(opts.scaleBinary, "N")["--scale-binary"]("scale binary cost in model");
   cli = cli | clara::Arg(opts.path, "graph file")("Path to adjacency list").required();
 
   auto result = cli.parse(clara::Args(argc, argv));
   if (!result) {
-    LOG(error, "Error in command line: {}", result.errorMessage());
+    LOG(critical, "Error in command line: {}", result.errorMessage());
     exit(1);
   }
 
@@ -433,6 +391,8 @@ int main(int argc, char **argv) {
     pangolin::logger::set_level(pangolin::logger::Level::TRACE);
   } else if (debug) {
     pangolin::logger::set_level(pangolin::logger::Level::DEBUG);
+  } else if (quiet) {
+    pangolin::logger::set_level(pangolin::logger::Level::ERR);
   }
 
   // log command line before much else happens
@@ -457,14 +417,15 @@ int main(int argc, char **argv) {
 
   if (header) {
     print_header(opts);
-    return 0;
   } else {
     if (wide) {
-      LOG(debug, "using 64-bit node IDs (--wide)");
+      LOG(debug, "64-bit node indices");
       return run<uint64_t>(opts);
     } else {
-      LOG(debug, "using 32-bit node IDs (--wide for 64)");
+      LOG(debug, "32-bit node indices");
       return run<uint32_t>(opts);
     }
   }
+
+  return 0;
 }

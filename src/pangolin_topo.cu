@@ -5,9 +5,11 @@
 #include <fmt/format.h>
 #include <iostream>
 
-#include "clara/clara.hpp"
-#include "pangolin/pangolin.cuh"
-#include "pangolin/pangolin.hpp"
+#include <clara/clara.hpp>
+
+#include "pangolin/configure.hpp"
+#include "pangolin/init.hpp"
+#include "pangolin/topology/topology.hpp"
 
 int main(int argc, char **argv) {
 
@@ -20,8 +22,7 @@ int main(int argc, char **argv) {
   clara::Parser cli;
   cli = cli | clara::Help(help);
   cli = cli | clara::Opt(debug)["--debug"]("print debug messages to stderr");
-  cli = cli |
-        clara::Opt(verbose)["--verbose"]("print verbose messages to stderr");
+  cli = cli | clara::Opt(verbose)["--verbose"]("print verbose messages to stderr");
 
   auto result = cli.parse(clara::Args(argc, argv));
   if (!result) {
@@ -52,8 +53,7 @@ int main(int argc, char **argv) {
     }
     LOG(debug, cmd);
   }
-  LOG(debug, "pangolin version: {}.{}.{}", PANGOLIN_VERSION_MAJOR,
-      PANGOLIN_VERSION_MINOR, PANGOLIN_VERSION_PATCH);
+  LOG(debug, "pangolin version: {}.{}.{}", PANGOLIN_VERSION_MAJOR, PANGOLIN_VERSION_MINOR, PANGOLIN_VERSION_PATCH);
   LOG(debug, "pangolin branch:  {}", PANGOLIN_GIT_REFSPEC);
   LOG(debug, "pangolin sha:     {}", PANGOLIN_GIT_HASH);
   LOG(debug, "pangolin changes: {}", PANGOLIN_GIT_LOCAL_CHANGES);
@@ -62,7 +62,7 @@ int main(int argc, char **argv) {
   LOG(warn, "Not a release build");
 #endif
 
-  pangolin::topology::Topology topology = pangolin::topology::topology();
+  auto& topology = pangolin::topology::get();
 
   // summarize NUMA regions
   fmt::print(stdout, "NUMA regions\n");

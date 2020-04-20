@@ -30,14 +30,10 @@ int main(int argc, char **argv) {
   clara::Parser cli;
   cli = cli | clara::Help(help);
   cli = cli | clara::Opt(debug)["--debug"]("print debug messages to stderr");
-  cli = cli |
-        clara::Opt(verbose)["--verbose"]("print verbose messages to stderr");
-  cli = cli | clara::Opt(dataSize,
-                         "BYTES")["-d"]("size of each data load in bytes (8)");
-  cli = cli |
-        clara::Opt(unitStr, "BKMG")["-u"]("the unit to present results in (M)");
-  cli =
-      cli | clara::Arg(path, "graph file")("Path to adjacency list").required();
+  cli = cli | clara::Opt(verbose)["--verbose"]("print verbose messages to stderr");
+  cli = cli | clara::Opt(dataSize, "BYTES")["-d"]("size of each data load in bytes (8)");
+  cli = cli | clara::Opt(unitStr, "BKMG")["-u"]("the unit to present results in (M)");
+  cli = cli | clara::Arg(path, "graph file")("Path to adjacency list").required();
 
   auto result = cli.parse(clara::Args(argc, argv));
   if (!result) {
@@ -69,8 +65,7 @@ int main(int argc, char **argv) {
     pangolin::logger::set_level(pangolin::logger::Level::DEBUG);
   }
 
-  LOG(debug, "pangolin version: {}.{}.{}", PANGOLIN_VERSION_MAJOR,
-      PANGOLIN_VERSION_MINOR, PANGOLIN_VERSION_PATCH);
+  LOG(debug, "pangolin version: {}.{}.{}", PANGOLIN_VERSION_MAJOR, PANGOLIN_VERSION_MINOR, PANGOLIN_VERSION_PATCH);
   LOG(debug, "pangolin branch:  {}", PANGOLIN_GIT_REFSPEC);
   LOG(debug, "pangolin sha:     {}", PANGOLIN_GIT_HASH);
   LOG(debug, "pangolin changes: {}", PANGOLIN_GIT_LOCAL_CHANGES);
@@ -102,8 +97,8 @@ int main(int argc, char **argv) {
   auto start = std::chrono::system_clock::now();
   pangolin::EdgeListFile file(path);
 
-  std::vector<pangolin::EdgeTy<uint64_t>> edges;
-  std::vector<pangolin::EdgeTy<uint64_t>> fileEdges;
+  std::vector<pangolin::DiEdge<uint64_t>> edges;
+  std::vector<pangolin::DiEdge<uint64_t>> fileEdges;
   while (file.get_edges(fileEdges, 10)) {
     edges.insert(edges.end(), fileEdges.begin(), fileEdges.end());
   }
@@ -113,11 +108,8 @@ int main(int argc, char **argv) {
 
   // create csr
   start = std::chrono::system_clock::now();
-  auto upperTriangular = [](pangolin::EdgeTy<uint64_t> e) {
-    return e.first < e.second;
-  };
-  auto csr = pangolin::COO<uint64_t>::from_edges(edges.begin(), edges.end(),
-                                                 upperTriangular);
+  auto upperTriangular = [](pangolin::DiEdge<uint64_t> e) { return e.src < e.dst; };
+  auto csr = pangolin::CSRCOO<uint64_t>::from_edges(edges.begin(), edges.end(), upperTriangular);
   LOG(debug, "nnz = {}", csr.nnz());
   elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
   LOG(info, "create CSR time {}s", elapsed);
@@ -133,7 +125,7 @@ int main(int argc, char **argv) {
 
   // count loads
   start = std::chrono::system_clock::now();
-#pragma omp parallel for schedule(dynamic) reduction(+ : colIndBytes,rowIndBytes,rowPtrBytes)
+#pragma omp parallel for schedule(dynamic) reduction(+ : colIndBytes, rowIndBytes, rowPtrBytes)
   for (size_t i = 0; i < csr.nnz(); ++i) {
     uint64_t src = csr.row_ind()[i];
     uint64_t dst = csr.col_ind()[i];
@@ -150,8 +142,7 @@ int main(int argc, char **argv) {
   elapsed = (std::chrono::system_clock::now() - start).count() / 1e9;
   LOG(info, "load count time {}s", elapsed);
 
-  const uint64_t staticMatBytes =
-      (csr.nnz() * 2 * 8 + (csr.num_rows() + 1) * 8);
+  const uint64_t staticMatBytes = (csr.nnz() * 2 * 8 + (csr.num_rows() + 1) * 8);
   const uint64_t dynamicMatBytes = rowPtrBytes + rowIndBytes + colIndBytes;
 
   std::cout << "static(" << unit << "),\t"
@@ -160,12 +151,9 @@ int main(int argc, char **argv) {
             << "colInd(" << unit << "),\t"
             << "dynamic(" << unit << "),\t"
             << "scale" << std::endl;
-  std::cout << staticMatBytes / double(scale) << ",\t"
-            << rowPtrBytes / double(scale) << ",\t"
-            << rowIndBytes / double(scale) << ",\t"
-            << colIndBytes / double(scale) << ",\t"
-            << dynamicMatBytes / double(scale) << ",\t"
-            << dynamicMatBytes / double(staticMatBytes) << std::endl;
+  std::cout << staticMatBytes / double(scale) << ",\t" << rowPtrBytes / double(scale) << ",\t"
+            << rowIndBytes / double(scale) << ",\t" << colIndBytes / double(scale) << ",\t"
+            << dynamicMatBytes / double(scale) << ",\t" << dynamicMatBytes / double(staticMatBytes) << std::endl;
 
   return 0;
 }

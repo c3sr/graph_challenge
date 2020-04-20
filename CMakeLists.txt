@@ -34,9 +34,24 @@ endif()
 
 if(CMAKE_BUILD_TYPE MATCHES "Release")
     set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo")
-    message(STATUS "${CMAKE_CUDA_FLAGS}")
 elseif(CMAKE_BUILD_TYPE MATCHES "Debug")
     set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")
+endif()
+
+# need to add the arch flags to the device link step as well
+# there is no way to do this through targets, so we do it
+# the old fashioned way
+# include PTX for at least dynamic parallelism, plus binaries for Pascal, Volta, and Turing as supported
+# -arch specifies the class of virtual architecture the source must be compiled for 
+# -compute specifies the PTX (compute) and SASS (sm) embedded in the binary
+if (${CMAKE_CUDA_COMPILER_VERSION} VERSION_GREATER_EQUAL 10)
+set(CMAKE_CUDA_FLAGS "-arch=compute_35 -code=compute_35,sm_61,sm_70,sm_75")
+elseif (${CMAKE_CUDA_COMPILER_VERSION} VERSION_GREATER_EQUAL 9)
+set(CMAKE_CUDA_FLAGS "-arch=compute_35 -code=compute_35,sm_61,sm_70")
+elseif (${CMAKE_CUDA_COMPILER_VERSION} VERSION_GREATER_EQUAL 8)
+set(CMAKE_CUDA_FLAGS "-arch=compute_35 -code=compute_35,sm_61")
+else()
+set(CMAKE_CUDA_FLAGS "-arch=compute_35") # -code implicitly is also compute_35
 endif()
 
 # add pangolin targets
